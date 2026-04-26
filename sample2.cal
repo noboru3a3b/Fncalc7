@@ -1,0 +1,443 @@
+## fncalc6.scm （if文を文の連続に対応）
+# 線形探索
+def find(x, v)
+  let i = 0,
+      k = length(v) in
+    while i < k and v[i] != x do
+      i = i + 1;
+    end
+    i < k;
+  end
+end
+
+def find1(x, v)
+  let iter = 0,
+      k = length(v) in
+    iter = fn(i)
+      if i == k then
+        0;
+      else
+        if v[i] == x then
+          1;
+        else
+          iter(i + 1);
+        end
+      end
+    end;
+    iter(0);
+  end
+end
+
+# 位置を返す
+def position(x, v)
+  let i = 0,
+      k = length(v) in
+    while i < k and v[i] != x do
+      i = i + 1;
+    end
+    if i < k then
+      i;
+    else
+      -1;
+    end
+  end
+end
+
+def position1(x, v)
+  let iter = 0,
+      k = length(v) in
+    iter = fn(i)
+      if i == k then
+        -1;
+      else
+        if v[i] == x then
+          i;
+        else
+          iter(i + 1);
+        end
+      end
+    end;
+    iter(0);
+  end
+end
+
+# 個数を求める
+def count(x, v)
+  let i = 0,
+      c = 0,
+      k = length(v) in
+    while i < k do
+      if v[i] == x then
+        c = c + 1;
+      end
+      i = i + 1;
+    end
+    c;
+  end
+end
+
+def count1(x, v)
+  let iter = 0,
+      k = length(v) in
+    iter = fn(i, c)
+      if i == k then
+        c;
+      else
+        if v[i] == x then
+          iter(i + 1, c + 1);
+        else
+          iter(i + 1, c);
+        end
+      end
+    end;
+    iter(0, 0);
+  end
+end
+
+# 二分探索（begin ... end 削除した）
+def bsearch(x, v, low, high)
+  let result = 0 in
+    while low <= high do
+      let mid = (low + high) // 2 in
+        if v[mid] == x then
+          result = 1;
+          high = -1;
+        else
+          if v[mid] < x then
+            low = mid + 1;
+          else
+            high = mid - 1;
+          end
+        end
+      end
+    end
+    result;
+  end
+end
+
+def binary_search(x, v)
+  bsearch(x, v, 0, length(v) - 1);
+end
+
+def bsearch1(x, v, low, high)
+  if low > high then
+    0;
+  else
+    let mid = (low + high) // 2 in
+      if v[mid] == x then
+        1;
+      else
+        if v[mid] < x then
+          bsearch1(x, v, mid + 1, high);
+        else
+          bsearch1(x, v, low, mid - 1);
+        end
+      end
+    end
+  end
+end
+
+def binary_search1(x, v)
+  bsearch1(x, v, 0, length(v) - 1);
+end
+
+# バブルソート
+def buble_sort(v)
+  let i = 0,
+      k = length(v) - 1 in
+    while i < k do
+      let j = k in
+        while i < j do
+          if v[j - 1] > v[j] then
+            let tmp = v[j] in
+              v[j] = v[j - 1];
+              v[j - 1] = tmp;
+            end
+          end
+          j = j - 1;
+        end
+      end
+      i = i + 1;
+    end
+  end
+  v;
+end
+
+# 選択ソート（begin ... end 削除した）
+def min_vector(v, x)
+  let min = v[x], pos = x, i = x + 1,
+      k = length(v) in
+    while i < k do
+      if min > v[i] then
+        min = v[i];
+        pos = i;
+      end
+      i = i + 1;
+    end
+    pos;
+  end
+end
+
+def select_sort(v)
+  let i = 0,
+      k = length(v) - 1 in
+    while i < k do
+      let j = min_vector(v, i) in
+        let tmp = v[j] in
+          v[j] = v[i];
+          v[i] = tmp;
+        end
+      end
+      i = i + 1;
+    end
+  end
+  v;
+end
+
+# 単純挿入ソート
+def insert_sort(v)
+  let i = 1,
+      k = length(v) in
+    while i < k do
+      let j = i, tmp = v[i] in
+        while j > 0 and v[j - 1] >= tmp do
+          v[j] = v[j - 1];
+          j = j - 1;
+        end
+        v[j] = tmp;
+      end
+      i = i + 1;
+    end
+  end
+  v;
+end
+
+# クイックソート
+def qsort(v, low, high)
+  let pivot = v[(low + high) // 2],
+      flag = 1,
+      i = low,
+      j = high in
+    while flag do
+      while v[i] < pivot do i = i + 1; end
+      while pivot < v[j] do j = j - 1; end
+      if i < j then
+        let tmp = v[i] in
+          v[i] = v[j];
+          v[j] = tmp;
+          i = i + 1;
+          j = j - 1;
+        end
+      else
+        flag = 0;
+      end
+    end
+    if low < i - 1 then qsort(v, low, i - 1); end
+    if j + 1 < high then qsort(v, j + 1, high); end
+  end
+end
+
+def quick_sort(v)
+  qsort(v, 0, length(v) - 1);
+  v;
+end
+
+# エラトステネスの篩
+def sieve_sub(n, m, buff)
+  let i = n + n in
+    while i <= m do
+      buff[i] = 1;
+      i = i + n;
+    end
+  end
+end
+
+def print_prime(n)
+  display(n);
+  display(" ");
+end
+
+def sieve(n)
+  let hurui = make_vector(n + 1, 0),
+      i = 3 in
+    sieve_sub(2, n, hurui);
+    while i * i < n do
+      if hurui[i] == 0 then
+        sieve_sub(i, n, hurui);
+      end
+      i = i + 2;
+    end
+    print_prime(2);
+    i = 3;
+    while i <= n do
+      if hurui[i] == 0 then
+        print_prime(i);
+      end
+      i = i + 2;
+    end
+  end
+end
+
+# 素因数分解
+def factorization(n)
+  while n % 2 == 0 do
+    display(2);
+    display(" ");
+    n = n / 2;
+  end
+  let i = 3 in
+    while i * i <= n do
+      while n % i == 0 do
+        display(i);
+        display(" ");
+        n = n / i;
+      end
+      i = i + 2;
+    end
+    if n > 1 then print(n); end
+  end
+end
+
+# 木の探索
+#def member_tree(x, tree)
+#  let iter = 0 in
+#    iter = fn(tree, cont)
+#      let i = 0,
+#          k = length(tree) in
+#        while i < k do
+#          if vector(tree[i]) then
+#            iter(tree[i], cont);
+#          else
+#            if tree[i] == x then
+#              cont(1);
+#            end
+#          end
+#          i = i + 1;
+#        end
+#      end
+#    end;
+#    callcc(fn(cont) iter(tree, cont); end);
+#  end
+#end
+## callcc -> return 化
+def member_tree(x, tree)
+  let iter = 0 in
+    iter = fn(tree)
+      let i = 0,
+          k = length(tree) in
+        while i < k do
+          if vector(tree[i]) then
+            if (iter(tree[i]) == 1) then return 1; end
+          else
+            if tree[i] == x then return 1; end
+          end
+          i = i + 1;
+        end
+      end
+    end;
+    iter(tree);
+  end
+end
+
+# 葉の個数を求める
+def count_leaf(v)
+  let c = 0,
+      i = 0,
+      k = length(v) in
+    while i < k do
+      if vector(v[i]) then
+        c = c + count_leaf(v[i]);
+      else
+        c = c + 1;
+      end
+      i = i + 1;
+    end
+    c;
+  end
+end
+
+# 平坦化（begin ... end 削除した）
+def flatten(v)
+  let i = 0,
+      iter = 0,
+      flat = make_vector(count_leaf(v), 0) in
+    iter = fn(v)
+      let j = 0,
+          k = length(v) in
+        while j < k do
+          if vector(v[j]) then
+            iter(v[j]);
+          else
+            flat[i] = v[j];
+            i = i + 1;
+          end
+          j = j + 1;
+        end
+      end
+    end;
+    iter(v);
+    flat;
+  end
+end
+
+## 起動法
+# PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm
+# Calc> load("list2.cal");
+# => 1
+
+## 使用法
+# Calc> load("sample2.cal");
+# => 1
+# Calc> find(8, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 1
+# Calc> find(10, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 0
+# Calc> find1(1, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 1
+# Calc> find1(0, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 0
+# Calc> position(8, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 7
+# Calc> position(10, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => -1
+# Calc> position1(1, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => 0
+# Calc> position1(0, [1, 2, 3, 4, 5, 6, 7, 8]);
+# => -1
+# Calc> count(1, [1, 1, 2, 1, 2, 3, 1, 2, 3, 4]);
+# => 4
+# Calc> count(5, [1, 1, 2, 1, 2, 3, 1, 2, 3, 4]);
+# => 0
+# Calc> count1(4, [1, 1, 2, 1, 2, 3, 1, 2, 3, 4]);
+# => 1
+# Calc> count1(5, [1, 1, 2, 1, 2, 3, 1, 2, 3, 4]);
+# => 0
+# Calc> binary_search(50, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+# => 1
+# Calc> binary_search(110, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+# => 0
+# Calc> binary_search1(50, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+# => 1
+# Calc> binary_search1(110, [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]);
+# => 0
+# Calc> buble_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);
+# => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# Calc> select_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);
+# => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# Calc> insert_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);
+# => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);
+# => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+# Calc> sieve(100);
+# 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47 53 59 61 67 71 73 79 83 89 97 => 0
+# Calc> factorization(1234567890);
+# 2 3 3 5 3607 3803
+# => 3803
+# Calc> member_tree(9, [1, [2, [3, [4, [5], 6], 7], 8], 9]);
+# => 1
+# Calc> member_tree(10, [1, [2, [3, [4, [5], 6], 7], 8], 9]);
+# => 0
+# Calc> count_leaf([1, [2, [3, 3, 3], 4], 5]);
+# => 7
+# Calc> flatten([1, [2, [3, 4, 5], 4], 5]);
+# => [1, 2, 3, 4, 5, 4, 5]

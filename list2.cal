@@ -1,0 +1,311 @@
+#
+# list2.cal : Vector-based Linked List Library
+# （セルをクロージャからベクターに変更）
+#
+# 空リスト
+#
+nil = "nil";
+#
+# null 判定
+#
+def null(x)
+  x eq nil;
+end
+#
+# 「ペア（= リストのセル or ネストしたリスト）」判定
+# ここでは「ベクタならペア」とみなす
+#
+def pair(x)
+  vector(x);
+end
+#
+# cons / car / cdr
+# リストのセルは [car, cdr] という長さ 2 のベクタで表現する
+#
+def cons(x, y)
+  [x, y];
+end
+def car(z)
+  z[0];
+end
+def cdr(z)
+  z[1];
+end
+#
+# setcar / setcdr
+#
+def setcar(s, x)
+  s[0] = x;
+end
+def setcdr(s, x)
+  s[1] = x;
+end
+#
+# listset
+#
+def listset(xs, n, v)
+  if null(xs) then
+    nil;
+  else
+    if n == 0 then
+      setcar(xs, v);
+    else
+      listset(cdr(xs), n - 1, v);
+    end
+  end
+end
+#
+# append
+#
+def append(xs, ys)
+  if null(xs) then
+    ys;
+  else
+    cons(car(xs), append(cdr(xs), ys));
+  end
+end
+#
+# listref : 0 オリジン
+#
+def listref(xs, n)
+  if null(xs) then
+    nil;
+  else
+    if n == 0 then
+      car(xs);
+    else
+      listref(cdr(xs), n - 1);
+    end
+  end
+end
+#
+# member : 要素が見つかったら、その位置からのリストを返す
+#
+def member(x, ls)
+  if null(ls) then
+    nil;
+  else
+    if car(ls) == x then
+      ls;
+    else
+      member(x, cdr(ls));
+    end
+  end
+end
+#
+# remove : x と等しい要素をすべて削除
+#
+def remove(x, ls)
+  if null(ls) then
+    nil;
+  else
+    if x == car(ls) then
+      remove(x, cdr(ls));
+    else
+      cons(car(ls), remove(x, cdr(ls)));
+    end
+  end
+end
+#
+# map
+#
+def map(f, ls)
+  if null(ls) then
+    nil;
+  else
+    cons(f(car(ls)), map(f, cdr(ls)));
+  end
+end
+#
+# filter
+#
+def filter(pred, ls)
+  if null(ls) then
+    nil;
+  else
+    if pred(car(ls)) then
+      cons(car(ls), filter(pred, cdr(ls)));
+    else
+      filter(pred, cdr(ls));
+    end
+  end
+end
+#
+# foldl
+#
+def foldl(f, a, ls)
+  if null(ls) then
+    a;
+  else
+    foldl(f, f(a, car(ls)), cdr(ls));
+  end
+end
+#
+# foldr
+#
+def foldr(f, a, ls)
+  if null(ls) then
+    a;
+  else
+    f(car(ls), foldr(f, a, cdr(ls)));
+  end
+end
+#
+# foreach
+#
+def foreach(f, ls)
+  if not null(ls) then
+    f(car(ls));
+    foreach(f, cdr(ls));
+  end
+end
+#
+# zip : (xs, ys) -> ((x1,y1) (x2,y2) ...)
+#
+def zip(xs, ys)
+  if null(xs) or null(ys) then
+    nil;
+  else
+    cons(cons(car(xs), car(ys)), zip(cdr(xs), cdr(ys)));
+  end
+end
+#
+# flatten : ネストしたリストを 1 次元に平坦化
+#
+def flatten(ls)
+  if null(ls) then
+    nil;
+  else
+    if pair(ls) then
+      append(flatten(car(ls)), flatten(cdr(ls)));
+    else
+      cons(ls, nil);
+    end
+  end
+end
+#
+# iota : n から m までの整数リスト（昇順）
+#
+def iota(n, m)
+  let a = nil in
+    while m >= n do
+      a = cons(m, a);
+      m = m - 1;
+    end
+    a;
+  end
+end
+#
+# リストの表示
+#
+def printlistsub(ls)
+  display("(");
+  while pair(ls) do
+    if pair(car(ls)) then
+      printlistsub(car(ls));
+    else
+      display(car(ls));
+    end
+    ls = cdr(ls);
+    if not null(ls) then display(" "); end
+  end
+  if not null(ls) then
+    display(". ");
+    display(ls);
+  end
+  display(")");
+end
+def printlist(ls)
+  printlistsub(ls);
+  newline();
+end
+
+## 起動法
+# PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm
+# Calc> load("list2.cal");
+# => 1
+
+## 使用法
+# Calc> a = iota(1, 8);
+# => [1, [2, [3, [4, [5, [6, [7, [8, nil]]]]]]]]
+# Calc> printlist(a);
+# (1 2 3 4 5 6 7 8)
+# => 0
+# Calc> printlist(member(5, a));
+# (5 6 7 8)
+# => 0
+# Calc> printlist(member(9, a));
+# ()
+# => 0
+# Calc> listref(a, 0);
+# => 1
+# Calc> listref(a, 7);
+# => 8
+# Calc> printlist(append(iota(1, 5), iota(6, 10)));
+# (1 2 3 4 5 6 7 8 9 10)
+# => 0
+# Calc> printlist(remove(5, a));
+# (1 2 3 4 6 7 8)
+# => 0
+# Calc> printlist(map(fn(x) x * x; end, a));
+# (1 4 9 16 25 36 49 64)
+# => 0
+# Calc> printlist(filter(fn(x) x % 2 == 0; end, a));
+# (2 4 6 8)
+# => 0
+# Calc> foldl(fn(x, y) x + y; end, 0, a);
+# => 36
+# Calc> foldr(fn(x, y) x + y; end, 0, a);
+# => 36
+# Calc> foreach(print, a);
+# 1
+# 2
+# 3
+# 4
+# 5
+# 6
+# 7
+# 8
+# => 0
+# Calc> b = zip(iota(1, 5), iota(11, 15));
+# => [[1, 11], [[2, 12], [[3, 13], [[4, 14], [[5, 15], nil]]]]]
+# Calc> printlist(b);
+# ((1 . 11) (2 . 12) (3 . 13) (4 . 14) (5 . 15))
+# => 0
+# Calc> printlist(flatten(b));
+# (1 11 2 12 3 13 4 14 5 15)
+# => 0
+# Calc> a = cons(1, 2);
+# => [1, 2]
+# Calc> printlist(a);
+# (1 . 2)
+# => 0
+# Calc> car(a);
+# => 1
+# Calc> cdr(a);
+# => 2
+# Calc> setcar(a, 10);
+# => 10
+# Calc> car(a);
+# => 10
+# Calc> setcdr(a, 20);
+# => 20
+# Calc> cdr(a);
+# => 20
+# Calc> printlist(a);
+# (10 . 20)
+# => 0
+# Calc> a = iota(1, 10);
+# => [1, [2, [3, [4, [5, [6, [7, [8, [9, [10, nil]]]]]]]]]]
+# Calc> printlist(a);
+# (1 2 3 4 5 6 7 8 9 10)
+# => 0
+# Calc> listset(a, 5, 100);
+# => 100
+# Calc> listref(a, 5);
+# => 100
+# Calc> printlist(a);
+# (1 2 3 4 5 100 7 8 9 10)
+# => 0
+# Calc> foldr(fn(x, acc) x - acc; end, 0, iota(1, 4));
+# => -2

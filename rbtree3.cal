@@ -1,0 +1,436 @@
+# 改善版 赤黒木実装 v2 (rbtree3.cal)
+# [left, right, color, key, data]
+#   0      1      2     3    4
+
+BLACK = 0;
+RED   = 1;
+nil   = "nil";
+
+# nil 判定
+def null(x)
+  x eq nil;
+end
+
+# ノード生成
+def make_node(k, v)
+  [nil, nil, RED, k, v];
+end
+
+# 色取得（nilはBLACKとみなす）
+def get_color(node)
+  if null(node) then BLACK; else node[2]; end
+end
+
+# 色設定
+def set_color(node, c)
+  if not null(node) then node[2] = c; end
+end
+
+# 右回転
+def rotate_right(node)
+  let l = node[0] in
+    node[0] = l[1];
+    l[1] = node;
+    l[2] = node[2];
+    node[2] = RED;
+    l;
+  end
+end
+
+# 左回転
+def rotate_left(node)
+  let r = node[1] in
+    node[1] = r[0];
+    r[0] = node;
+    r[2] = node[2];
+    node[2] = RED;
+    r;
+  end
+end
+
+# 色反転（挿入用）
+def flip_colors(node)
+  node[2] = RED;
+  set_color(node[0], BLACK);
+  set_color(node[1], BLACK);
+end
+
+# 色反転（削除用）
+def flip_colors_delete(node)
+  node[2] = not node[2];
+  if not null(node[0]) then node[0][2] = not node[0][2]; end
+  if not null(node[1]) then node[1][2] = not node[1][2]; end
+end
+
+# 探索
+def search(node, k)
+  while not null(node) do
+    if k == node[3] then
+      return node[4];
+    else
+      if k < node[3] then
+        node = node[0];
+      else
+        node = node[1];
+      end
+    end
+  end
+  nil;
+end
+
+# 挿入のバランス調整（ボトムアップ）
+def fix_up(node)
+  # Case 1: 右の子が赤で左の子が黒 → 左回転
+  if get_color(node[1]) == RED and get_color(node[0]) == BLACK then
+    node = rotate_left(node);
+  end
+
+  # Case 2: 左の子とその左の子が両方赤 → 右回転
+  if get_color(node[0]) == RED and get_color(node[0][0]) == RED then
+    node = rotate_right(node);
+  end
+
+  # Case 3: 両方の子が赤 → 色反転
+  if get_color(node[0]) == RED and get_color(node[1]) == RED then
+    flip_colors(node);
+  end
+
+  node;
+end
+
+# 挿入（内部関数）
+def insert_impl(node, k, v)
+  if null(node) then
+    return make_node(k, v);
+  end
+
+  if k < node[3] then
+    node[0] = insert_impl(node[0], k, v);
+  else
+    if k > node[3] then
+      node[1] = insert_impl(node[1], k, v);
+    else
+      node[4] = v;  # 上書き
+    end
+  end
+
+  fix_up(node);
+end
+
+# 挿入（外部インターフェース）
+def insert(node, k, v)
+  node = insert_impl(node, k, v);
+  # ルートは必ずBLACK
+  if not null(node) then node[2] = BLACK; end
+  node;
+end
+
+# 最小ノード検索
+def search_min_node(node)
+  while not null(node[0]) do
+    node = node[0];
+  end
+  node;
+end
+
+# 赤ノードに移動（削除準備）
+def move_red_left(node)
+  flip_colors_delete(node);
+  if not null(node[1]) and get_color(node[1][0]) == RED then
+    node[1] = rotate_right(node[1]);
+    node = rotate_left(node);
+    flip_colors_delete(node);
+  end
+  node;
+end
+
+def move_red_right(node)
+  flip_colors_delete(node);
+  if not null(node[0]) and get_color(node[0][0]) == RED then
+    node = rotate_right(node);
+    flip_colors_delete(node);
+  end
+  node;
+end
+
+# 最小ノード削除
+def delete_min(node)
+  if null(node[0]) then
+    return nil;
+  end
+
+  if get_color(node[0]) == BLACK and get_color(node[0][0]) == BLACK then
+    node = move_red_left(node);
+  end
+
+  node[0] = delete_min(node[0]);
+  fix_up(node);
+end
+
+# 削除（内部関数）
+def delete_impl(node, k)
+  if null(node) then return nil; end
+
+  if k < node[3] then
+    # 左部分木に進む
+    if not null(node[0]) then
+      if get_color(node[0]) == BLACK and get_color(node[0][0]) == BLACK then
+        node = move_red_left(node);
+      end
+    end
+    node[0] = delete_impl(node[0], k);
+  else
+    # 左の子が赤なら右回転
+    if get_color(node[0]) == RED then
+      node = rotate_right(node);
+    end
+
+    # キーが一致し、右の子がnilなら削除
+    if k == node[3] and null(node[1]) then
+      return nil;
+    end
+
+    # 右部分木に進む準備
+    if not null(node[1]) then
+      if get_color(node[1]) == BLACK and get_color(node[1][0]) == BLACK then
+        node = move_red_right(node);
+      end
+    end
+
+    if k == node[3] then
+      # 右部分木の最小ノードで置換
+      let m = search_min_node(node[1]) in
+        node[3] = m[3];
+        node[4] = m[4];
+        node[1] = delete_min(node[1]);
+      end
+    else
+      node[1] = delete_impl(node[1], k);
+    end
+  end
+
+  fix_up(node);
+end
+
+# 削除（外部インターフェース）
+def delete(node, k)
+  if null(node) then return nil; end
+  node = delete_impl(node, k);
+  # ルートは必ずBLACK
+  if not null(node) then node[2] = BLACK; end
+  node;
+end
+
+# 中順走査
+def traverse(node)
+  if not null(node) then
+    traverse(node[0]);
+    print(node[3]);
+    traverse(node[1]);
+  end
+end
+
+# 検証：赤黒木の性質チェック
+def check_rb_property(node)
+  if null(node) then return 1; end  # 黒高さ1を返す
+
+  # 性質1: 赤ノードの子は両方黒
+  if node[2] == RED then
+    if get_color(node[0]) == RED or get_color(node[1]) == RED then
+      display("ERROR: Red node has red child at key ");
+      display(node[3]);
+      newline();
+      return -1;
+    end
+  end
+
+  # 左右の黒高さをチェック
+  let left_height = check_rb_property(node[0]),
+      right_height = check_rb_property(node[1]) in
+    
+    if left_height == -1 or right_height == -1 then
+      return -1;
+    end
+
+    if left_height != right_height then
+      display("ERROR: Black height mismatch at node ");
+      display(node[3]);
+      display(" (left=");
+      display(left_height);
+      display(", right=");
+      display(right_height);
+      display(")");
+      newline();
+      return -1;
+    end
+
+    if node[2] == BLACK then
+      left_height + 1;
+    else
+      left_height;
+    end
+  end
+end
+
+# 検証関数（外部インターフェース）
+def validate(node)
+  if null(node) then
+    print("Tree is valid (empty)");
+    return 1;
+  end
+
+  if node[2] == RED then
+    print("ERROR: Root is not black!");
+    return 0;
+  end
+
+  let height = check_rb_property(node) in
+    if height == -1 then
+      print("Tree is INVALID");
+      0;
+    else
+      display("Tree is valid (black height: ");
+      display(height);
+      display(")");
+      newline();
+      1;
+    end
+  end
+end
+
+# カウント（ノード数）
+def count_nodes(node)
+  if null(node) then
+    0;
+  else
+    count_nodes(node[0]) + count_nodes(node[1]) + 1;
+  end
+end
+
+# ノード表示（中順・インデント付き）
+def print_node(node, depth)
+  if null(node) then
+    return 0;
+  end
+
+  # 左部分木
+  print_node(node[0], depth + 1);
+
+  # ローカル変数導入
+  let c = 0, i = 0 in
+    # 色判定
+    if node[2] == BLACK then
+      c = "B";
+    else
+      c = "R";
+    end
+
+    # インデント
+    i = 0;
+    while i < depth do
+      display("    ");
+      i = i + 1;
+    end
+
+    # ノード表示（key位置は必要に応じて調整）
+    display(c);
+    display(" ");
+    print(node[3]);
+  end
+
+  # 右部分木
+  print_node(node[1], depth + 1);
+end
+
+# --- 使用例 ---
+print("=== Red-Black Tree Test ===");
+newline();
+
+root = nil;
+
+print("Inserting: 10, 5, 20, 15, 30, 25, 35, 3, 7");
+root = insert(root, 10, "aaa");
+root = insert(root, 5, "bbb");
+root = insert(root, 20, "ccc");
+root = insert(root, 15, "ddd");
+root = insert(root, 30, "eee");
+root = insert(root, 25, "fff");
+root = insert(root, 35, "ggg");
+root = insert(root, 3, "hhh");
+root = insert(root, 7, "iii");
+
+newline();
+print("In-order traversal:");
+traverse(root);
+
+newline();
+validate(root);
+
+newline();
+print("Searching for key 15:");
+print(search(root, 15));
+
+newline();
+print("Deleting key 10:");
+root = delete(root, 10);
+
+newline();
+print("In-order traversal after deletion:");
+traverse(root);
+
+newline();
+validate(root);
+
+newline();
+print("Deleting key 20:");
+root = delete(root, 20);
+
+newline();
+print("In-order traversal after deletion:");
+traverse(root);
+
+newline();
+validate(root);
+
+newline();
+print("Deleting key 5:");
+root = delete(root, 5);
+print("In-order traversal:");
+traverse(root);
+validate(root);
+
+newline();
+print("=== Stress Test: Insert and Delete ===");
+root = nil;
+let i = 0 in
+  while i < 50 do
+    root = insert(root, i, i);
+    i = i + 1;
+  end
+end
+
+display("After 50 insertions, node count: ");
+print(count_nodes(root));
+validate(root);
+
+newline();
+print("Deleting every other node:");
+let i = 0 in
+  while i < 50 do
+    root = delete(root, i);
+    i = i + 2;
+  end
+end
+
+display("After deletions, node count: ");
+print(count_nodes(root));
+validate(root);
+
+newline();
+print("Remaining keys (should be odd numbers):");
+traverse(root);
+
+print_node(root, 0);
+validate(root);
+
+print("=== Test Complete ===");
