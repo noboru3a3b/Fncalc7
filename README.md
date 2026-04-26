@@ -129,13 +129,13 @@ Remaining keys (should be odd numbers):
 B 31  
 ............B 33  
 ........B 35  
-            B 37  
-    B 39  
-                B 41  
-            R 43  
-                B 45  
-        B 47  
-            B 49  
+............B 37  
+....B 39  
+................B 41  
+............R 43  
+................B 45  
+........B 47  
+............B 49  
 Tree is valid (black height: 5)  
 === Test Complete ===  
 => 1
