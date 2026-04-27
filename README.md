@@ -7,7 +7,7 @@ Then I created a red-black tree library using vectors.
 I received assistance from AI in creating this library, which was extremely helpful.
 
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm 
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm  
 Calc> load("sample2.cal");  
 => 1  
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
