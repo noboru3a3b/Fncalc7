@@ -12,6 +12,7 @@ PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc7.scm
 load("list2.cal");  
 => 1  
 ; ジェネレータ生成  
+```
 Calc> def make_gen(proc, ls)  
   let resume = 0 in  
     resume = fn(ret)  
@@ -21,8 +22,10 @@ Calc> def make_gen(proc, ls)
     fn() callcc(fn(cont) resume(cont); end); end;  
   end  
 end  
-=> closure  
+=> closure
+```  
 ; 順列生成  
+```
 Calc> def perm(f, ls)  
   let iter = 0 in  
     iter = fn(ls, a)  
@@ -35,8 +38,10 @@ Calc> def perm(f, ls)
     iter(ls, nil);  
   end  
 end  
-=> closure  
+=> closure
+```
 ; 順列の生成テスト（１回目）  
+```
 Calc> g = make_gen(perm, iota(1, 3));  
 => closure  
 Calc> printlist(g());  
@@ -59,13 +64,16 @@ Calc> printlist(g());
 => 0  
 Calc> printlist(g());  
 ()  
-=> 0  
+=> 0
+```
 ; 順列の生成テスト（２回目）  
+```
 Calc> g = make_gen(perm, iota(1, 3));			<--- make_gen() は何度でも動く  
 => closure  
 Calc> printlist(g());  
 (3 2 1)  
-=> 0  
+=> 0
+```  
   
 Calc> load("sample2.cal");  
 => 1  
