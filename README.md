@@ -1,15 +1,15 @@
 # Fncalc7
-Fncalc7 is a slightly extended version of the functional programming language fncalc, designed by M. Hiroi and implemented in Gauche.
-I undertook this project to study the EBNF syntax used in compiler development.
+Fncalc7 is a slightly extended version of the functional programming language fncalc, designed by M  Hiroi and implemented in Gauche 
+I undertook this project to study the EBNF syntax used in compiler development 
 fncalc originally came with a list library that applied closures,
-but I rewrote it to use vectors.
-Then I created a red-black tree library using vectors.
-I received assistance from AI in creating this library, which was extremely helpful.
+but I rewrote it to use vectors 
+Then I created a red-black tree library using vectors 
+I received assistance from AI in creating this library, which was extremely helpful 
 
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc7.scm  
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc7 scm  
   
-load("list2.cal");  
+load("list2 cal");  
 => 1  
 ; ジェネレータ生成  
 ```python
@@ -76,12 +76,12 @@ Calc> printlist(g());
 ```  
   
 ```python
-Calc> load("sample2.cal");  
+Calc> load("sample2 cal");  
 => 1  
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
 => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  
   
-Calc> load("list2.cal");  
+Calc> load("list2 cal");  
 => 1  
 Calc> a = iota(1, 10);  
 => [1, [2, [3, [4, [5, [6, [7, [8, [9, [10, nil]]]]]]]]]]  
@@ -91,7 +91,7 @@ Calc> printlist(a);
 ```  
 
 ```python
-Calc> load("rbtree3.cal");  
+Calc> load("rbtree3 cal");  
 === Red-Black Tree Test ===  
   
 Inserting: 10, 5, 20, 15, 30, 25, 35, 3, 7  
@@ -183,31 +183,31 @@ Remaining keys (should be odd numbers):
 45  
 47  
 49  
-................B 1  
-............B 3  
-................B 5  
-........B 7  
-................B 9  
-............B 11  
-................B 13  
-....R 15  
-................B 17  
-............B 19  
-................B 21  
-........B 23  
-................B 25  
-............B 27  
-................B 29  
+                B 1  
+            B 3  
+                B 5  
+        B 7  
+                B 9  
+            B 11  
+                B 13  
+    R 15  
+                B 17  
+            B 19  
+                B 21  
+        B 23  
+                B 25  
+            B 27  
+                B 29  
 B 31  
-............B 33  
-........B 35  
-............B 37  
-....B 39  
-................B 41  
-............R 43  
-................B 45  
-........B 47  
-............B 49  
+            B 33  
+        B 35  
+            B 37  
+    B 39  
+                B 41  
+            R 43  
+                B 45  
+        B 47  
+            B 49  
 Tree is valid (black height: 5)  
 === Test Complete ===
 ```
