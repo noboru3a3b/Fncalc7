@@ -9,7 +9,7 @@ I received assistance from AI in creating this library, which was extremely help
 ## Usage:
 PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc7 scm  
   
-load("list2 cal");  
+load("list2.cal");  
 => 1  
 ; ジェネレータ生成  
 ```python
@@ -76,12 +76,12 @@ Calc> printlist(g());
 ```  
   
 ```python
-Calc> load("sample2 cal");  
+Calc> load("sample2.cal");  
 => 1  
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
 => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]  
   
-Calc> load("list2 cal");  
+Calc> load("list2.cal");  
 => 1  
 Calc> a = iota(1, 10);  
 => [1, [2, [3, [4, [5, [6, [7, [8, [9, [10, nil]]]]]]]]]]  
@@ -91,7 +91,7 @@ Calc> printlist(a);
 ```  
 
 ```python
-Calc> load("rbtree3 cal");  
+Calc> load("rbtree3.cal");  
 === Red-Black Tree Test ===  
   
 Inserting: 10, 5, 20, 15, 30, 25, 35, 3, 7  
