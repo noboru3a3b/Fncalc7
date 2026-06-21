@@ -1,0 +1,160 @@
+;;; fncalc6.scm : 関数型電卓プログラム (R7RS-small 対応版)
+;;;
+;;;               Copyright (C) 2011-2021 Makoto Hiroi
+;;;               (1) コンパイラを作成
+;;;               (2) SECD 仮想マシンを作成
+;;;               (3) 継続機能を追加			<--- 3つ目のソース
+;;;               (4) 末尾再帰最適化を追加
+;;;               (5) ベクタを追加
+;;;               (6) サンプルプログラムを作成
+;;;               (7) if文を文の連続に対応
+;;;               (8) 末尾再帰最適化を無効化（継続の機能を一部壊していたため）
+;;;               (9) 末尾再帰最適化を有効化。継続を削除。break、return を追加
+
+
+
+実は、私が以前実装したFncalcという関数型言語で、継続を実装した直後は継続機能が正常に動いていたのに、
+その後末尾再帰最適化を実装したら、一部の継続機能が誤動作するようになってしまいました。
+起きた現象は以下のようなことです。
+まず起きた現象を貼り付けるのでよく見てください。
+起きた現象を理解できたら、次の指示を出しますので、余分なコメントは不要です。
+「理解しました。次の指示をください。」とだけ出力してください。
+
+;; fncalc2.scm（継続を実装直後）の場合
+C:\Users\user\Gauche\Fncalc3>gosh -r7 -A . fncalc2.scm
+; リストライブラリ読み込み
+Calc> load("list.cal");
+=> 1
+; ジェネレータ生成
+Calc> def make_gen(proc, ls)
+  let resume = 0 in
+    resume = fn(ret)
+      proc(fn(x) ret = callcc(fn(cont) resume = cont; ret(x); end); end, ls);
+      ret(nil);
+    end;
+    fn() callcc(fn(cont) resume(cont); end); end;
+  end
+end
+=> closure
+; 順列生成
+Calc> def perm(f, ls)
+  let iter = 0 in
+    iter = fn(ls, a)
+      if null(ls) then
+        f(a);
+      else
+        foreach(fn(x) iter(remove(x, ls), cons(x, a)); end, ls);
+      end
+    end;
+    iter(ls, nil);
+  end
+end
+=> closure
+; 順列の生成テスト（１回目）
+Calc> g = make_gen(perm, iota(1, 3));
+=> closure
+Calc> printlist(g());
+(3 2 1)
+=> 0
+Calc> printlist(g());
+(2 3 1)
+=> 0
+Calc> printlist(g());
+(3 1 2)
+=> 0
+Calc> printlist(g());
+(1 3 2)
+=> 0
+Calc> printlist(g());
+(2 1 3)
+=> 0
+Calc> printlist(g());
+(1 2 3)
+=> 0
+Calc> printlist(g());
+()
+=> 0
+; 順列の生成テスト（２回目）
+Calc> g = make_gen(perm, iota(1, 3));			<--- make_gen() は何度でも動く
+=> closure
+Calc> printlist(g());
+(3 2 1)
+=> 0
+Calc> printlist(g());
+(2 3 1)
+=> 0
+Calc> printlist(g());
+(3 1 2)
+=> 0
+Calc> printlist(g());
+(1 3 2)
+=> 0
+Calc> printlist(g());
+(2 1 3)
+=> 0
+Calc> printlist(g());
+(1 2 3)
+=> 0
+Calc> printlist(g());
+()
+=> 0
+Calc>
+
+
+
+;; fncalc3.scm（末尾再帰最適化を実装直後）の場合
+C:\Users\user\Gauche\Fncalc4>gosh -r7 -A . fncalc3.scm
+Calc> load("list.cal");
+=> 1
+Calc> def make_gen(proc, ls)
+  let resume = 0 in
+    resume = fn(ret)
+      proc(fn(x) ret = callcc(fn(cont) resume = cont; ret(x); end); end, ls);
+      ret(nil);
+    end;
+    fn() callcc(fn(cont) resume(cont); end); end;
+  end
+end
+=> closure
+Calc> def perm(f, ls)
+  let iter = 0 in
+    iter = fn(ls, a)
+      if null(ls) then
+        f(a);
+      else
+        foreach(fn(x) iter(remove(x, ls), cons(x, a)); end, ls);
+      end
+    end;
+    iter(ls, nil);
+  end
+end
+=> closure
+Calc> g = make_gen(perm, iota(1, 3));
+=> closure
+Calc> printlist(g());
+(3 2 1)
+=> 0
+Calc> printlist(g());
+(2 3 1)
+=> 0
+Calc> printlist(g());
+(3 1 2)
+=> 0
+Calc> printlist(g());
+(1 3 2)
+=> 0
+Calc> printlist(g());
+(2 1 3)
+=> 0
+Calc> printlist(g());
+(1 2 3)
+=> 0
+Calc> printlist(g());
+()
+=> 0
+Calc> printlist(g());
+()
+=> 0
+Calc> g = make_gen(perm, iota(1, 3));			<--- ここでフリーズ！
+^C
+
