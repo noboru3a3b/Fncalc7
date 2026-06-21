@@ -75,6 +75,7 @@ Calc> printlist(g());
 => 0
 ```  
   
+```python
 Calc> load("sample2.cal");  
 => 1  
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
@@ -86,8 +87,10 @@ Calc> a = iota(1, 10);
 => [1, [2, [3, [4, [5, [6, [7, [8, [9, [10, nil]]]]]]]]]]  
 Calc> printlist(a);  
 (1 2 3 4 5 6 7 8 9 10)  
-=> 0  
-  
+=> 0
+```  
+
+```python
 Calc> load("rbtree3.cal");  
 === Red-Black Tree Test ===  
   
@@ -206,6 +209,7 @@ B 31
 ........B 47  
 ............B 49  
 Tree is valid (black height: 5)  
-=== Test Complete ===  
+=== Test Complete ===
+```
 => 1
 Calc>
