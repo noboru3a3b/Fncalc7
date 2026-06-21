@@ -7,7 +7,66 @@ Then I created a red-black tree library using vectors.
 I received assistance from AI in creating this library, which was extremely helpful.
 
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm  
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc7.scm  
+  
+load("list2.cal");  
+=> 1  
+; ジェネレータ生成  
+Calc> def make_gen(proc, ls)  
+  let resume = 0 in  
+    resume = fn(ret)  
+      proc(fn(x) ret = callcc(fn(cont) resume = cont; ret(x); end); end, ls);  
+      ret(nil);  
+    end;  
+    fn() callcc(fn(cont) resume(cont); end); end;  
+  end  
+end  
+=> closure  
+; 順列生成  
+Calc> def perm(f, ls)  
+  let iter = 0 in  
+    iter = fn(ls, a)  
+      if null(ls) then  
+        f(a);  
+      else  
+        foreach(fn(x) iter(remove(x, ls), cons(x, a)); end, ls);  
+      end  
+    end;  
+    iter(ls, nil);  
+  end  
+end  
+=> closure  
+; 順列の生成テスト（１回目）  
+Calc> g = make_gen(perm, iota(1, 3));  
+=> closure  
+Calc> printlist(g());  
+(3 2 1)  
+=> 0  
+Calc> printlist(g());  
+(2 3 1)  
+=> 0  
+Calc> printlist(g());  
+(3 1 2)  
+=> 0  
+Calc> printlist(g());  
+(1 3 2)  
+=> 0  
+Calc> printlist(g());  
+(2 1 3)  
+=> 0  
+Calc> printlist(g());  
+(1 2 3)  
+=> 0  
+Calc> printlist(g());  
+()  
+=> 0  
+; 順列の生成テスト（２回目）  
+Calc> g = make_gen(perm, iota(1, 3));			<--- make_gen() は何度でも動く  
+=> closure  
+Calc> printlist(g());  
+(3 2 1)  
+=> 0  
+  
 Calc> load("sample2.cal");  
 => 1  
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
