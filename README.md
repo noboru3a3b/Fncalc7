@@ -75,7 +75,7 @@ Calc> load("sample2.cal");
 Calc> quick_sort([5, 6, 4, 7, 3, 8, 2, 9, 1, 0]);  
 => [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
 ```
-
+  
 ```python
 Calc> load("list2.cal");  
 => 1  
@@ -85,7 +85,7 @@ Calc> printlist(a);
 (1 2 3 4 5 6 7 8 9 10)  
 => 0
 ```  
-
+  
 ```python
 Calc> load("rbtree3.cal");  
 === Red-Black Tree Test ===  
