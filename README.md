@@ -1,5 +1,5 @@
-# Fncalc7
-Fncalc7 is a slightly extended version of the functional programming language fncalc, designed by M.  Hiroi and implemented in Gauche.
+# Fncalc8
+Fncalc8 is a slightly extended version of the functional programming language fncalc, designed by M.  Hiroi and implemented in Gauche.
 I undertook this project to study the EBNF syntax used in compiler development.
 fncalc originally came with a list library that applied closures,
 but I rewrote it to use vectors.
@@ -9,7 +9,7 @@ We were able to resolve the conflict between "continuation" and "tail recursion 
 Thanks to AI.
 
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc7 scm  
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc8 scm  
   
 ```python
 load("list2.cal");  
