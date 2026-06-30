@@ -1,12 +1,14 @@
-# Fncalc8
-Fncalc8 is a slightly extended version of the functional programming language fncalc, designed by M.  Hiroi and implemented in Gauche.
+# Fncalc7
+Fncalc7 is a slightly extended version of the functional programming language fncalc, designed by M.  Hiroi and implemented in Gauche.
 I undertook this project to study the EBNF syntax used in compiler development.
 fncalc originally came with a list library that applied closures,
 but I rewrote it to use vectors.
 Then I created a red-black tree library using vectors.
 I received assistance from AI in creating this library, which was extremely helpful.
-We were able to resolve the conflict between "continuation" and "tail recursion optimization" that we had been considering.
-Thanks to AI.
+  
+I have recently managed to resolve the conflict I had been considering between "continuations" and "tail-call optimization."
+My thanks go to Claude Opus 4.8.
+  
 
 ## Usage:
 PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc8 scm  
