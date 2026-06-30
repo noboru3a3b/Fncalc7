@@ -11,7 +11,7 @@ My thanks go to Claude Opus 4.8.
   
 
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A    \fncalc8 scm  
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . fncalc8 scm  
   
 ```python
 load("list2.cal");  
