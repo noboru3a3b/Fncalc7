@@ -1,0 +1,891 @@
+#
+# rbtree4.cal : 左傾き赤黒木 (Left-Leaning Red-Black Tree) ライブラリ
+#
+#   rbtree3.cal の後継。要 fncalc9.scm
+#   （let を貫通する return と文字列プリミティブを使う）
+#
+# ---------------------------------------------------------------------------
+# rbtree3.cal からの主な変更
+# ---------------------------------------------------------------------------
+#   RB-01  空リンクを文字列 nil から数値 0 へ。nil は eq（＝オブジェクト同一性）で
+#          判定していたため、他ライブラリが nil を再代入すると既存の木が全滅した。
+#          数値 0 は再代入で壊れず、vector() で確実に判定できる。
+#   RB-02  delete_min / delete_max に公開ラッパを用意し、下降前の「根を赤」と
+#          終了後の「根を黒」を必ず挟む。これが無いと不変条件が壊れる。
+#   RB-03  検証に BST 順序（中順走査で厳密単調増加）の検査を追加。
+#   RB-04  検証に左傾き不変条件（右向き赤リンクの禁止）とサイズ整合の検査を追加。
+#   RB-05  「該当なし」は 0（＝非ベクタ）で表す。値が何であっても不在と混同しない。
+#          rb_get は既定値を受け取る形にした。
+#   RB-06  木をハンドル [root, cmp] で包み、ルートの再代入を不要にした。
+#          さらに経路複製による永続版 rbp_* を用意（スナップショットが壊れない）。
+#   RB-07  比較関数を注入可能にした。数値でも文字列でも扱える。
+#   RB-08  delete の前に contains 検査と「根を赤」を行う（Sedgewick 標準）。
+#          これにより不変条件が保証され、防御的な空リンク検査を外せる。
+#          色反転は挿入・削除とも真の反転に統一した。
+#   RB-09  ノードに size を持たせ、件数取得を O(1) に。rank / select が可能に。
+#   RB-10  内部関数は rbi_ 接頭辞。前提条件をコメントで明示。
+#   RB-11  ライブラリとテストを分離（試験は rbtree4_test.cal）。全名前に接頭辞。
+#
+# ---------------------------------------------------------------------------
+# 表現
+# ---------------------------------------------------------------------------
+#   ノード   : [left, right, color, key, data, size]   （長さ 6 のベクタ）
+#                0     1      2      3    4     5
+#   空リンク : 0（数値）。vector(x) が偽なら空。
+#   ハンドル : [root, cmp]   … これを db と呼ぶ
+#   比較関数 : cmp(a, b) が 負 / 0 / 正 を返す
+#
+# ---------------------------------------------------------------------------
+# 注意
+# ---------------------------------------------------------------------------
+#   * rb_* は破壊的更新、rbp_* は経路複製。同じ db に両方を混ぜて使わないこと。
+#     混ぜると rb_* が rbp_* のスナップショットを書き換えてしまう。
+#   * 内部関数 rbi_* は不変条件が成り立っていることを前提にしており、空リンクを
+#     渡すと落ちる。公開 API の rb_* / rbp_* だけを使うこと。
+#   * 空リンク判定に and の短絡評価を利用している箇所がある
+#     （例: rbi_color(h[0]) == RB_RED and rbi_color(h[0][0]) == RB_RED）。
+#     左辺が偽なら h[0][0] は評価されない。Fncalc の and は短絡する。
+#   * and と or は同順位・左結合。複合条件には必ず括弧を付けること。
+#
+
+RB_BLACK = 0;
+RB_RED   = 1;
+
+# ===========================================================================
+# 前提条件の検査
+# ===========================================================================
+#
+# fncalc8.scm で読み込むと、let の中の return が関数を抜けないため rbi_search が
+# 常に 0（見つからない）を返す。エラーにならず静かに誤答するので、必ず検査する。
+
+def rbi_check_return()
+  let a = 1 in
+    return 1;
+  end
+  0;
+end
+
+if rbi_check_return() != 1 then
+  print("!!! rbtree4.cal: this interpreter does not let `return` escape a `let`.");
+  print("!!! Run with fncalc9.scm. On fncalc8.scm searches silently return nothing.");
+end
+
+# 文字列キーを使う場合のみ必要
+if not function(string_compare) then
+  print("!!! rbtree4.cal: string primitives are missing (fncalc9.scm required).");
+  print("!!! Numeric keys still work; rb_new_string() will fail.");
+end
+
+# ===========================================================================
+# 比較関数
+# ===========================================================================
+
+def rb_cmp_number(a, b)
+  a - b;
+end
+
+def rb_cmp_string(a, b)
+  string_compare(a, b);
+end
+
+# ===========================================================================
+# ノードの基本操作（内部）
+# ===========================================================================
+
+# 色。空リンクは黒とみなす
+def rbi_color(h)
+  if vector(h) then h[2]; else RB_BLACK; end
+end
+
+# 部分木のノード数。空リンクは 0
+def rbi_size(h)
+  if vector(h) then h[5]; else 0; end
+end
+
+# 新しい赤ノード
+def rbi_node(k, v)
+  [0, 0, RB_RED, k, v, 1];
+end
+
+# ノードの浅い複製（永続版で使う）
+def rbi_copy(h)
+  [h[0], h[1], h[2], h[3], h[4], h[5]];
+end
+
+# 子から size を再計算する
+def rbi_fixsize(h)
+  h[5] = rbi_size(h[0]) + rbi_size(h[1]) + 1;
+  h;
+end
+
+# 左回転。前提: h[1] は非空
+def rbi_rot_left(h)
+  let x = h[1] in
+    h[1] = x[0];
+    x[0] = h;
+    x[2] = h[2];
+    h[2] = RB_RED;
+    x[5] = h[5];
+    rbi_fixsize(h);
+    x;
+  end
+end
+
+# 右回転。前提: h[0] は非空
+def rbi_rot_right(h)
+  let x = h[0] in
+    h[0] = x[1];
+    x[1] = h;
+    x[2] = h[2];
+    h[2] = RB_RED;
+    x[5] = h[5];
+    rbi_fixsize(h);
+    x;
+  end
+end
+
+# 色の反転。挿入・削除で共通（Sedgewick 現行版に合わせた真の反転）
+# 前提: h と両方の子が非空
+def rbi_flip(h)
+  h[2]    = 1 - h[2];
+  h[0][2] = 1 - h[0][2];
+  h[1][2] = 1 - h[1][2];
+  h;
+end
+
+# 右向き赤リンクの解消・赤赤の解消・両子赤の分割。挿入と削除の両方で使う
+def rbi_balance(h)
+  if rbi_color(h[1]) == RB_RED and rbi_color(h[0]) == RB_BLACK then
+    h = rbi_rot_left(h);
+  end
+  if rbi_color(h[0]) == RB_RED and rbi_color(h[0][0]) == RB_RED then
+    h = rbi_rot_right(h);
+  end
+  if rbi_color(h[0]) == RB_RED and rbi_color(h[1]) == RB_RED then
+    rbi_flip(h);
+  end
+  rbi_fixsize(h);
+end
+
+# ===========================================================================
+# 探索（内部）
+# ===========================================================================
+
+# ノードを返す。無ければ 0
+def rbi_search(h, k, cmp)
+  let c = 0 in
+    while vector(h) do
+      c = cmp(k, h[3]);
+      if c == 0 then return h; end
+      if c < 0 then h = h[0]; else h = h[1]; end
+    end
+  end
+  0;
+end
+
+# 前提: h は非空
+def rbi_min_node(h)
+  while vector(h[0]) do h = h[0]; end
+  h;
+end
+
+# 前提: h は非空
+def rbi_max_node(h)
+  while vector(h[1]) do h = h[1]; end
+  h;
+end
+
+# k 以下で最大のキーを持つノード。無ければ 0
+def rbi_floor(h, k, cmp)
+  if not vector(h) then return 0; end
+  let c = cmp(k, h[3]) in
+    if c == 0 then
+      h;
+    else
+      if c < 0 then
+        rbi_floor(h[0], k, cmp);
+      else
+        let t = rbi_floor(h[1], k, cmp) in
+          if vector(t) then t; else h; end
+        end
+      end
+    end
+  end
+end
+
+# k 以上で最小のキーを持つノード。無ければ 0
+def rbi_ceiling(h, k, cmp)
+  if not vector(h) then return 0; end
+  let c = cmp(k, h[3]) in
+    if c == 0 then
+      h;
+    else
+      if c > 0 then
+        rbi_ceiling(h[1], k, cmp);
+      else
+        let t = rbi_ceiling(h[0], k, cmp) in
+          if vector(t) then t; else h; end
+        end
+      end
+    end
+  end
+end
+
+# k 未満のキーの個数
+def rbi_rank(h, k, cmp)
+  if not vector(h) then return 0; end
+  let c = cmp(k, h[3]) in
+    if c < 0 then
+      rbi_rank(h[0], k, cmp);
+    else
+      if c > 0 then
+        rbi_size(h[0]) + 1 + rbi_rank(h[1], k, cmp);
+      else
+        rbi_size(h[0]);
+      end
+    end
+  end
+end
+
+# 昇順 i 番目（0 オリジン）のノード。範囲外なら 0
+def rbi_select(h, i)
+  if not vector(h) then return 0; end
+  let t = rbi_size(h[0]) in
+    if i < t then
+      rbi_select(h[0], i);
+    else
+      if i > t then
+        rbi_select(h[1], i - t - 1);
+      else
+        h;
+      end
+    end
+  end
+end
+
+# ===========================================================================
+# 挿入（内部）
+# ===========================================================================
+
+def rbi_put(h, k, v, cmp)
+  if not vector(h) then return rbi_node(k, v); end
+  let c = cmp(k, h[3]) in
+    if c < 0 then
+      h[0] = rbi_put(h[0], k, v, cmp);
+    else
+      if c > 0 then
+        h[1] = rbi_put(h[1], k, v, cmp);
+      else
+        h[4] = v;
+      end
+    end
+  end
+  rbi_balance(h);
+end
+
+# ===========================================================================
+# 削除（内部）
+# ===========================================================================
+
+# 左へ降りる準備。前提: h は赤、h[0] と h[0][0] は黒、両子は非空
+def rbi_move_red_left(h)
+  rbi_flip(h);
+  if rbi_color(h[1][0]) == RB_RED then
+    h[1] = rbi_rot_right(h[1]);
+    h = rbi_rot_left(h);
+    rbi_flip(h);
+  end
+  h;
+end
+
+# 右へ降りる準備。前提: h は赤、h[1] と h[1][0] は黒、両子は非空
+def rbi_move_red_right(h)
+  rbi_flip(h);
+  if rbi_color(h[0][0]) == RB_RED then
+    h = rbi_rot_right(h);
+    rbi_flip(h);
+  end
+  h;
+end
+
+# 前提: h は非空で、h または h[0] が赤（下降時の不変条件）
+def rbi_delmin(h)
+  if not vector(h[0]) then return 0; end
+  if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
+    h = rbi_move_red_left(h);
+  end
+  h[0] = rbi_delmin(h[0]);
+  rbi_balance(h);
+end
+
+# 前提: 同上
+def rbi_delmax(h)
+  if rbi_color(h[0]) == RB_RED then
+    h = rbi_rot_right(h);
+  end
+  if not vector(h[1]) then return 0; end
+  if rbi_color(h[1]) == RB_BLACK and rbi_color(h[1][0]) == RB_BLACK then
+    h = rbi_move_red_right(h);
+  end
+  h[1] = rbi_delmax(h[1]);
+  rbi_balance(h);
+end
+
+# 前提: k は部分木に必ず存在する（呼び出し側が contains で確認済み）。
+#       この前提のおかげで h[0] / h[1] の空検査が不要になる。
+def rbi_del(h, k, cmp)
+  if cmp(k, h[3]) < 0 then
+    if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
+      h = rbi_move_red_left(h);
+    end
+    h[0] = rbi_del(h[0], k, cmp);
+  else
+    if rbi_color(h[0]) == RB_RED then
+      h = rbi_rot_right(h);
+    end
+    if cmp(k, h[3]) == 0 and not vector(h[1]) then return 0; end
+    if rbi_color(h[1]) == RB_BLACK and rbi_color(h[1][0]) == RB_BLACK then
+      h = rbi_move_red_right(h);
+    end
+    if cmp(k, h[3]) == 0 then
+      let m = rbi_min_node(h[1]) in
+        h[3] = m[3];
+        h[4] = m[4];
+        h[1] = rbi_delmin(h[1]);
+      end
+    else
+      h[1] = rbi_del(h[1], k, cmp);
+    end
+  end
+  rbi_balance(h);
+end
+
+# ===========================================================================
+# 走査（内部）
+# ===========================================================================
+
+def rbi_foreach(h, f)
+  if vector(h) then
+    rbi_foreach(h[0], f);
+    f(h[3], h[4]);
+    rbi_foreach(h[1], f);
+  end
+end
+
+def rbi_range(h, lo, hi, f, cmp)
+  if vector(h) then
+    let cl = 0, ch = 0 in
+      cl = cmp(lo, h[3]);
+      ch = cmp(hi, h[3]);
+      if cl < 0 then rbi_range(h[0], lo, hi, f, cmp); end
+      if cl <= 0 and ch >= 0 then f(h[3], h[4]); end
+      if ch > 0 then rbi_range(h[1], lo, hi, f, cmp); end
+    end
+  end
+end
+
+# ===========================================================================
+# ソート済みベクタからの一括構築（O(n)）
+# ===========================================================================
+#
+# 黒高さ d の部分木が持てるノード数の範囲を使って、上から分割していく。
+#   B(d) = 黒根・黒高さ d の部分木の最大ノード数
+#        = 1 + A(d-1) + B(d-1)        左は赤根可、右は黒根のみ（左傾き）
+#   A(d) = 根が赤でもよい場合の最大   = 1 + 2 * B(d)
+#   最小 = 2^d - 1（完全黒木）
+# 左の子を取れるだけ大きく取ることで、赤リンクは必ず左向きになる。
+
+def rbi_pow2(n)
+  let p = 1 in
+    while n > 0 do
+      p = p * 2;
+      n = n - 1;
+    end
+    p;
+  end
+end
+
+def rbi_bmax_b(d)
+  if d == 0 then
+    0;
+  else
+    let b = rbi_bmax_b(d - 1) in
+      1 + (1 + 2 * b) + b;
+    end
+  end
+end
+
+def rbi_bmax_a(d)
+  1 + 2 * rbi_bmax_b(d);
+end
+
+def rbi_bmin(d)
+  rbi_pow2(d) - 1;
+end
+
+# v は [key, value] の対を昇順に並べたベクタ
+def rbi_build_b(v, lo, n, d)
+  if d == 0 then return 0; end
+  let m = 0, nl = 0, nr = 0, h = 0, lim = 0 in
+    m   = n - 1;
+    nl  = rbi_bmax_a(d - 1);
+    lim = m - rbi_bmin(d - 1);
+    if lim < nl then nl = lim; end
+    nr  = m - nl;
+    h = [0, 0, RB_BLACK, v[lo + nl][0], v[lo + nl][1], n];
+    h[0] = rbi_build_a(v, lo, nl, d - 1);
+    h[1] = rbi_build_b(v, lo + nl + 1, nr, d - 1);
+    h;
+  end
+end
+
+def rbi_build_a(v, lo, n, d)
+  if n <= rbi_bmax_b(d) then
+    rbi_build_b(v, lo, n, d);
+  else
+    let m = 0, nl = 0, nr = 0, h = 0, lim = 0 in
+      m   = n - 1;
+      nl  = rbi_bmax_b(d);
+      lim = m - rbi_bmin(d);
+      if lim < nl then nl = lim; end
+      nr  = m - nl;
+      h = [0, 0, RB_RED, v[lo + nl][0], v[lo + nl][1], n];
+      h[0] = rbi_build_b(v, lo, nl, d);
+      h[1] = rbi_build_b(v, lo + nl + 1, nr, d);
+      h;
+    end
+  end
+end
+
+# ===========================================================================
+# 永続版の内部関数（経路複製）
+# ===========================================================================
+#
+# 「これから書き換えるノードは、必ず自分の複製にしてから触る」だけが規則。
+# 引数 h は常に「呼び出し側が複製済みで、他から共有されていないノード」とする。
+
+def rbi_prot_left(h)
+  let x = rbi_copy(h[1]) in
+    h[1] = x[0];
+    x[0] = h;
+    x[2] = h[2];
+    h[2] = RB_RED;
+    x[5] = h[5];
+    rbi_fixsize(h);
+    x;
+  end
+end
+
+def rbi_prot_right(h)
+  let x = rbi_copy(h[0]) in
+    h[0] = x[1];
+    x[1] = h;
+    x[2] = h[2];
+    h[2] = RB_RED;
+    x[5] = h[5];
+    rbi_fixsize(h);
+    x;
+  end
+end
+
+def rbi_pflip(h)
+  h[0] = rbi_copy(h[0]);
+  h[1] = rbi_copy(h[1]);
+  h[2]    = 1 - h[2];
+  h[0][2] = 1 - h[0][2];
+  h[1][2] = 1 - h[1][2];
+  h;
+end
+
+def rbi_pbalance(h)
+  if rbi_color(h[1]) == RB_RED and rbi_color(h[0]) == RB_BLACK then
+    h = rbi_prot_left(h);
+  end
+  if rbi_color(h[0]) == RB_RED and rbi_color(h[0][0]) == RB_RED then
+    h = rbi_prot_right(h);
+  end
+  if rbi_color(h[0]) == RB_RED and rbi_color(h[1]) == RB_RED then
+    rbi_pflip(h);
+  end
+  rbi_fixsize(h);
+end
+
+def rbi_pput(h, k, v, cmp)
+  if not vector(h) then return rbi_node(k, v); end
+  let n = rbi_copy(h), c = 0 in
+    c = cmp(k, n[3]);
+    if c < 0 then
+      n[0] = rbi_pput(n[0], k, v, cmp);
+    else
+      if c > 0 then
+        n[1] = rbi_pput(n[1], k, v, cmp);
+      else
+        n[4] = v;
+      end
+    end
+    rbi_pbalance(n);
+  end
+end
+
+def rbi_pmove_red_left(h)
+  rbi_pflip(h);
+  if rbi_color(h[1][0]) == RB_RED then
+    h[1] = rbi_prot_right(h[1]);
+    h = rbi_prot_left(h);
+    rbi_pflip(h);
+  end
+  h;
+end
+
+def rbi_pmove_red_right(h)
+  rbi_pflip(h);
+  if rbi_color(h[0][0]) == RB_RED then
+    h = rbi_prot_right(h);
+    rbi_pflip(h);
+  end
+  h;
+end
+
+def rbi_pdelmin(h)
+  if not vector(h[0]) then return 0; end
+  if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
+    h = rbi_pmove_red_left(h);
+  end
+  h[0] = rbi_pdelmin(rbi_copy(h[0]));
+  rbi_pbalance(h);
+end
+
+def rbi_pdel(h, k, cmp)
+  if cmp(k, h[3]) < 0 then
+    if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
+      h = rbi_pmove_red_left(h);
+    end
+    h[0] = rbi_pdel(rbi_copy(h[0]), k, cmp);
+  else
+    if rbi_color(h[0]) == RB_RED then
+      h = rbi_prot_right(h);
+    end
+    if cmp(k, h[3]) == 0 and not vector(h[1]) then return 0; end
+    if rbi_color(h[1]) == RB_BLACK and rbi_color(h[1][0]) == RB_BLACK then
+      h = rbi_pmove_red_right(h);
+    end
+    if cmp(k, h[3]) == 0 then
+      let m = rbi_min_node(h[1]) in
+        h[3] = m[3];
+        h[4] = m[4];
+        h[1] = rbi_pdelmin(rbi_copy(h[1]));
+      end
+    else
+      h[1] = rbi_pdel(rbi_copy(h[1]), k, cmp);
+    end
+  end
+  rbi_pbalance(h);
+end
+
+# ===========================================================================
+# 公開 API : 生成とアクセサ
+# ===========================================================================
+
+def rb_new(cmp)
+  [0, cmp];
+end
+
+def rb_new_number()
+  [0, rb_cmp_number];
+end
+
+def rb_new_string()
+  [0, rb_cmp_string];
+end
+
+# スナップショット（rbp_snapshot の戻り値）から読み取り用ハンドルを作る
+def rb_from_root(root, cmp)
+  [root, cmp];
+end
+
+def rb_root(db)
+  db[0];
+end
+
+def rb_size(db)
+  rbi_size(db[0]);
+end
+
+def rb_is_empty(db)
+  not vector(db[0]);
+end
+
+def rb_clear(db)
+  db[0] = 0;
+  0;
+end
+
+# ノードのアクセサ。利用者が添字を直接触らずに済むようにする
+def rb_key(n)
+  n[3];
+end
+
+def rb_value(n)
+  n[4];
+end
+
+def rb_set_value(n, v)
+  n[4] = v;
+end
+
+# 探索結果が「該当あり」か
+def rb_found(n)
+  vector(n);
+end
+
+# ===========================================================================
+# 公開 API : 探索
+# ===========================================================================
+
+def rb_search_node(db, k)
+  rbi_search(db[0], k, db[1]);
+end
+
+def rb_contains(db, k)
+  vector(rbi_search(db[0], k, db[1]));
+end
+
+# 見つからなければ default を返す。値そのものと不在を混同しない
+def rb_get(db, k, default)
+  let n = rbi_search(db[0], k, db[1]) in
+    if vector(n) then n[4]; else default; end
+  end
+end
+
+def rb_min_node(db)
+  if not vector(db[0]) then return 0; end
+  rbi_min_node(db[0]);
+end
+
+def rb_max_node(db)
+  if not vector(db[0]) then return 0; end
+  rbi_max_node(db[0]);
+end
+
+def rb_floor_node(db, k)
+  rbi_floor(db[0], k, db[1]);
+end
+
+def rb_ceiling_node(db, k)
+  rbi_ceiling(db[0], k, db[1]);
+end
+
+def rb_rank(db, k)
+  rbi_rank(db[0], k, db[1]);
+end
+
+def rb_select_node(db, i)
+  if i < 0 then return 0; end
+  rbi_select(db[0], i);
+end
+
+# ===========================================================================
+# 公開 API : 更新（破壊的）
+# ===========================================================================
+
+def rb_put(db, k, v)
+  db[0] = rbi_put(db[0], k, v, db[1]);
+  db[0][2] = RB_BLACK;
+  v;
+end
+
+# 削除できたら 1、キーが無ければ 0
+def rb_delete(db, k)
+  if not rb_contains(db, k) then return 0; end
+  if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
+    db[0][2] = RB_RED;
+  end
+  db[0] = rbi_del(db[0], k, db[1]);
+  if vector(db[0]) then db[0][2] = RB_BLACK; end
+  1;
+end
+
+def rb_delete_min(db)
+  if not vector(db[0]) then return 0; end
+  if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
+    db[0][2] = RB_RED;
+  end
+  db[0] = rbi_delmin(db[0]);
+  if vector(db[0]) then db[0][2] = RB_BLACK; end
+  1;
+end
+
+def rb_delete_max(db)
+  if not vector(db[0]) then return 0; end
+  if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
+    db[0][2] = RB_RED;
+  end
+  db[0] = rbi_delmax(db[0]);
+  if vector(db[0]) then db[0][2] = RB_BLACK; end
+  1;
+end
+
+# ソート済み（昇順・キー重複なし）の [key, value] 対のベクタから O(n) で構築する。
+# 既存の中身は捨てる。初期ロード用。
+def rb_from_sorted(db, v)
+  let n = 0, d = 0 in
+    n = length(v);
+    while rbi_bmax_b(d) < n do d = d + 1; end
+    db[0] = rbi_build_b(v, 0, n, d);
+  end
+  rb_size(db);
+end
+
+# ===========================================================================
+# 公開 API : 更新（永続・経路複製）
+# ===========================================================================
+#
+# 更新前のルートを取っておけば、それは永久に有効なスナップショットになる。
+# 1 回の更新で新しく作られるノードは O(log n) 個。
+
+def rbp_snapshot(db)
+  db[0];
+end
+
+def rbp_put(db, k, v)
+  db[0] = rbi_pput(db[0], k, v, db[1]);
+  db[0][2] = RB_BLACK;
+  v;
+end
+
+def rbp_delete(db, k)
+  if not rb_contains(db, k) then return 0; end
+  let r = rbi_copy(db[0]) in
+    if rbi_color(r[0]) == RB_BLACK and rbi_color(r[1]) == RB_BLACK then
+      r[2] = RB_RED;
+    end
+    db[0] = rbi_pdel(r, k, db[1]);
+    if vector(db[0]) then db[0][2] = RB_BLACK; end
+  end
+  1;
+end
+
+# ===========================================================================
+# 公開 API : 走査
+# ===========================================================================
+
+# 中順に f(key, value) を適用する
+def rb_foreach(db, f)
+  rbi_foreach(db[0], f);
+end
+
+# lo <= key <= hi の範囲だけ中順に f(key, value) を適用する
+def rb_range(db, lo, hi, f)
+  rbi_range(db[0], lo, hi, f, db[1]);
+end
+
+# ===========================================================================
+# 公開 API : 検証
+# ===========================================================================
+#
+# 赤黒木としての全不変条件を検査する。
+#   1. 根は黒
+#   2. 赤ノードは赤い子を持たない
+#   3. 右向きの赤リンクが無い（左傾き）
+#   4. どの経路も黒高さが等しい
+#   5. size フィールドが子と整合する
+#   6. 中順走査でキーが厳密単調増加（BST 順序）
+
+rbv_err     = 0;
+rbv_prev    = 0;
+rbv_started = 0;
+
+def rbi_vfail(msg, k)
+  display("  RB-VIOLATION: ");
+  display(msg);
+  display(" at key ");
+  print(k);
+  rbv_err = rbv_err + 1;
+  0;
+end
+
+# 黒高さを返す。空リンクは 0（標準の数え方）
+def rbi_check_bh(h)
+  if not vector(h) then return 0; end
+  if rbi_color(h[1]) == RB_RED then
+    rbi_vfail("right-leaning red link", h[3]);
+  end
+  if h[2] == RB_RED and rbi_color(h[0]) == RB_RED then
+    rbi_vfail("red node with red left child", h[3]);
+  end
+  if h[2] == RB_RED and rbi_color(h[1]) == RB_RED then
+    rbi_vfail("red node with red right child", h[3]);
+  end
+  if h[5] != rbi_size(h[0]) + rbi_size(h[1]) + 1 then
+    rbi_vfail("size field inconsistent", h[3]);
+  end
+  let lh = 0, rh = 0 in
+    lh = rbi_check_bh(h[0]);
+    rh = rbi_check_bh(h[1]);
+    if lh != rh then
+      rbi_vfail("black height mismatch", h[3]);
+    end
+    if h[2] == RB_BLACK then lh + 1; else lh; end
+  end
+end
+
+def rbi_check_order(h, cmp)
+  if vector(h) then
+    rbi_check_order(h[0], cmp);
+    if rbv_started == 1 and cmp(rbv_prev, h[3]) >= 0 then
+      rbi_vfail("BST order violated", h[3]);
+    end
+    rbv_prev    = h[3];
+    rbv_started = 1;
+    rbi_check_order(h[1], cmp);
+  end
+end
+
+# 正常なら 1、違反があれば 0（違反内容は標準出力へ）
+def rb_validate(db)
+  rbv_err     = 0;
+  rbv_started = 0;
+  if vector(db[0]) and db[0][2] == RB_RED then
+    rbi_vfail("root is red", db[0][3]);
+  end
+  rbi_check_bh(db[0]);
+  rbi_check_order(db[0], db[1]);
+  if rbv_err == 0 then 1; else 0; end
+end
+
+# 黒高さ。違反があれば -1
+def rb_black_height(db)
+  rbv_err = 0;
+  let bh = rbi_check_bh(db[0]) in
+    if rbv_err == 0 then bh; else -1; end
+  end
+end
+
+# ===========================================================================
+# 公開 API : 表示（デバッグ用）
+# ===========================================================================
+
+def rbi_print_node(h, depth)
+  if vector(h) then
+    rbi_print_node(h[1], depth + 1);
+    let i = 0 in
+      while i < depth do
+        display("    ");
+        i = i + 1;
+      end
+    end
+    if h[2] == RB_BLACK then display("B "); else display("R "); end
+    display(h[3]);
+    display(" (");
+    display(h[5]);
+    display(")");
+    newline();
+    rbi_print_node(h[0], depth + 1);
+  end
+end
+
+# 木を横倒しに表示する（上が大きいキー）
+def rb_print(db)
+  rbi_print_node(db[0], 0);
+  0;
+end

@@ -1,0 +1,780 @@
+#
+# rbtree4_test.cal : rbtree4.cal の検証ハーネス
+#
+#   使い方:  gosh -r7 -A . fncalc9.scm
+#            Calc> load("rbtree4.cal");
+#            Calc> load("rbtree4_test.cal");
+#
+# ライブラリ本体はロードしても何も実行しない。試験はこのファイルだけが持つ。
+#
+
+t_fail  = 0;
+t_count = 0;
+
+def t_eq(name, got, want)
+  t_count = t_count + 1;
+  if got != want then
+    display("FAIL: ");
+    display(name);
+    display("   got=");
+    display(got);
+    display(" want=");
+    print(want);
+    t_fail = t_fail + 1;
+  end
+  0;
+end
+
+def t_ok(name, cond)
+  t_count = t_count + 1;
+  if not cond then
+    display("FAIL: ");
+    print(name);
+    t_fail = t_fail + 1;
+  end
+  0;
+end
+
+def t_section(name)
+  newline();
+  display("--- ");
+  print(name);
+  0;
+end
+
+# 擬似乱数（線形合同法）
+t_seed = 12345;
+def t_rnd(n)
+  t_seed = (t_seed * 1103515245 + 12345) % 2147483648;
+  (t_seed // 65536) % n;
+end
+
+# ===========================================================================
+# 0. 検証器そのものの自己テスト
+#    わざと壊した木を検出できなければ、以降の「合格」に意味がない
+# ===========================================================================
+
+t_section("0. validator self-test (each case MUST be detected)");
+
+tdb = rb_new_number();
+let i = 0 in
+  while i < 15 do
+    rb_put(tdb, i, i * 100);
+    i = i + 1;
+  end
+end
+t_eq("clean tree passes", rb_validate(tdb), 1);
+
+print("  (the following violations are expected output)");
+
+# 根を赤に
+r = rb_root(tdb);
+r[2] = RB_RED;
+t_eq("detects red root", rb_validate(tdb), 0);
+r[2] = RB_BLACK;
+
+# 右向き赤リンク（黒高さは保ったまま）
+rl = [0, 0, RB_BLACK, 10, "l", 1];
+r1 = [0, 0, RB_BLACK, 30, "a", 1];
+r2 = [0, 0, RB_BLACK, 50, "b", 1];
+rr = [r1, r2, RB_RED,  40, "r", 3];
+rx = [rl, rr, RB_BLACK, 20, "x", 5];
+bad = rb_from_root(rx, rb_cmp_number);
+t_eq("detects right-leaning red link", rb_validate(bad), 0);
+
+# BST 順序の破壊
+r = rb_root(tdb);
+saved_key = r[0][0][3];
+r[0][0][3] = 9999;
+t_eq("detects BST order violation", rb_validate(tdb), 0);
+r[0][0][3] = saved_key;
+
+# size フィールドの破壊
+r[5] = r[5] + 1;
+t_eq("detects size inconsistency", rb_validate(tdb), 0);
+r[5] = r[5] - 1;
+
+# 赤赤
+r[0][2] = RB_RED;
+r[0][0][2] = RB_RED;
+t_eq("detects consecutive red", rb_validate(tdb), 0);
+r[0][2] = RB_BLACK;
+r[0][0][2] = RB_BLACK;
+
+t_eq("tree restored", rb_validate(tdb), 1);
+
+# ===========================================================================
+# 1. 基本操作
+# ===========================================================================
+
+t_section("1. basic operations");
+
+db = rb_new_number();
+t_eq("empty size", rb_size(db), 0);
+t_ok("empty is_empty", rb_is_empty(db));
+t_eq("empty validate", rb_validate(db), 1);
+t_eq("get on empty returns default", rb_get(db, 1, -7), -7);
+t_ok("contains on empty is false", not rb_contains(db, 1));
+t_eq("delete on empty returns 0", rb_delete(db, 1), 0);
+t_eq("delete_min on empty returns 0", rb_delete_min(db), 0);
+t_eq("delete_max on empty returns 0", rb_delete_max(db), 0);
+t_ok("min_node on empty not found", not rb_found(rb_min_node(db)));
+
+rb_put(db, 10, 100);
+t_eq("size after 1 put", rb_size(db), 1);
+t_eq("get", rb_get(db, 10, -1), 100);
+rb_put(db, 10, 999);
+t_eq("overwrite keeps size", rb_size(db), 1);
+t_eq("overwrite updates value", rb_get(db, 10, -1), 999);
+t_eq("delete only node", rb_delete(db, 10), 1);
+t_eq("size back to 0", rb_size(db), 0);
+t_ok("empty again", rb_is_empty(db));
+
+# 値そのものと不在の区別（RB-05）
+rb_put(db, 1, 0);
+t_eq("value 0 is distinguishable from absent", rb_get(db, 1, -1), 0);
+t_eq("absent still returns default", rb_get(db, 2, -1), -1);
+t_ok("contains(1)", rb_contains(db, 1));
+t_ok("not contains(2)", not rb_contains(db, 2));
+rb_clear(db);
+
+# ===========================================================================
+# 2. 決定的な挿入・削除パターン
+# ===========================================================================
+
+t_section("2. deterministic insert / delete patterns");
+
+# 昇順挿入 100 件、毎回検証
+db = rb_new_number();
+bad = 0;
+let i = 0 in
+  while i < 100 do
+    rb_put(db, i, i * 100);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    if rb_size(db) != i + 1 then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("ascending insert x100", bad, 0);
+
+# 昇順削除
+bad = 0;
+let i = 0 in
+  while i < 100 do
+    if rb_delete(db, i) != 1 then bad = bad + 1; end
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    if rb_size(db) != 99 - i then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("ascending delete x100", bad, 0);
+
+# 降順挿入・降順削除
+db = rb_new_number();
+bad = 0;
+let i = 99 in
+  while i >= 0 do
+    rb_put(db, i, i * 100);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    i = i - 1;
+  end
+end
+let i = 99 in
+  while i >= 0 do
+    rb_delete(db, i);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    i = i - 1;
+  end
+end
+t_eq("descending insert+delete x100", bad, 0);
+t_eq("empty after all deletes", rb_size(db), 0);
+
+# 存在しないキーの削除（木を壊してはならない）
+db = rb_new_number();
+let i = 0 in
+  while i < 40 do
+    rb_put(db, i * 2, i);
+    i = i + 1;
+  end
+end
+bad = 0;
+let i = 0 in
+  while i < 200 do
+    if rb_delete(db, i * 2 + 1) != 0 then bad = bad + 1; end
+    if rb_delete(db, -1) != 0 then bad = bad + 1; end
+    if rb_delete(db, 99999) != 0 then bad = bad + 1; end
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("delete of non-existent keys x600", bad, 0);
+t_eq("size unchanged", rb_size(db), 40);
+
+# ===========================================================================
+# 3. delete_min / delete_max  （rbtree3.cal で壊れていた箇所 = RB-02）
+# ===========================================================================
+
+t_section("3. delete_min / delete_max  (RB-02 regression)");
+
+db = rb_new_number();
+let i = 0 in
+  while i < 60 do
+    rb_put(db, i, i * 100);
+    i = i + 1;
+  end
+end
+bad = 0;
+let i = 0 in
+  while i < 60 do
+    let n = rb_min_node(db) in
+      if rb_key(n) != i then bad = bad + 1; end
+    end
+    rb_delete_min(db);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    if rb_size(db) != 59 - i then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("delete_min x60", bad, 0);
+
+db = rb_new_number();
+let i = 0 in
+  while i < 60 do
+    rb_put(db, i, i * 100);
+    i = i + 1;
+  end
+end
+bad = 0;
+let i = 0 in
+  while i < 60 do
+    let n = rb_max_node(db) in
+      if rb_key(n) != 59 - i then bad = bad + 1; end
+    end
+    rb_delete_max(db);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    if rb_size(db) != 59 - i then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("delete_max x60", bad, 0);
+
+# 交互
+db = rb_new_number();
+let i = 0 in
+  while i < 61 do
+    rb_put(db, i, i);
+    i = i + 1;
+  end
+end
+bad = 0;
+let i = 0 in
+  while i < 30 do
+    rb_delete_min(db);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    rb_delete_max(db);
+    if rb_validate(db) == 0 then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("alternating delete_min/max", bad, 0);
+t_eq("one node left", rb_size(db), 1);
+t_eq("it is the middle key", rb_key(rb_min_node(db)), 30);
+
+# ===========================================================================
+# 4. モデル検査つきランダム試験
+# ===========================================================================
+
+t_section("4. randomized ops with full model check");
+
+MODN     = 64;
+mdl_has  = make_vector(MODN, 0);
+mdl_seen = make_vector(MODN, 0);
+mdl_bad  = 0;
+mdl_n    = 0;
+
+def mdl_reset()
+  let i = 0 in
+    while i < MODN do
+      mdl_has[i] = 0;
+      i = i + 1;
+    end
+  end
+  0;
+end
+
+def mdl_check(db)
+  mdl_bad = 0;
+  mdl_n   = 0;
+  let i = 0 in
+    while i < MODN do
+      mdl_seen[i] = 0;
+      i = i + 1;
+    end
+  end
+  rb_foreach(db, fn(k, v)
+    mdl_n = mdl_n + 1;
+    if k < 0 or k >= MODN then
+      mdl_bad = mdl_bad + 1;
+    else
+      if mdl_seen[k] == 1 then mdl_bad = mdl_bad + 1; end
+      mdl_seen[k] = 1;
+      if v != k * 100 then mdl_bad = mdl_bad + 1; end
+    end
+  end);
+  let i = 0 in
+    while i < MODN do
+      if mdl_seen[i] != mdl_has[i] then mdl_bad = mdl_bad + 1; end
+      i = i + 1;
+    end
+  end
+  if rb_size(db) != mdl_n then mdl_bad = mdl_bad + 1; end
+  mdl_bad;
+end
+
+def run_random(sd, iters)
+  t_seed = sd;
+  mdl_reset();
+  let db = rb_new_number(), i = 0, k = 0, bad = 0 in
+    while i < iters do
+      k = t_rnd(MODN);
+      if t_rnd(3) == 0 then
+        if rb_delete(db, k) != mdl_has[k] then bad = bad + 1; end
+        mdl_has[k] = 0;
+      else
+        rb_put(db, k, k * 100);
+        mdl_has[k] = 1;
+      end
+      if rb_validate(db) == 0 then bad = bad + 1; end
+      bad = bad + mdl_check(db);
+      if bad > 0 then
+        display("  seed ");
+        display(sd);
+        display(" failed at iteration ");
+        print(i);
+        return bad;
+      end
+      i = i + 1;
+    end
+    bad;
+  end
+end
+
+total = 0;
+let s = 0 in
+  while s < 40 do
+    total = total + run_random(s * 7919 + 3, 300);
+    s = s + 1;
+  end
+end
+t_eq("40 seeds x 300 ops, shape + content verified", total, 0);
+
+# ===========================================================================
+# 5. 順序問い合わせ  min / max / floor / ceiling / rank / select
+# ===========================================================================
+
+t_section("5. ordered queries");
+
+db = rb_new_number();
+let i = 0 in
+  while i < 50 do
+    rb_put(db, i * 10, i);
+    i = i + 1;
+  end
+end
+
+t_eq("min", rb_key(rb_min_node(db)), 0);
+t_eq("max", rb_key(rb_max_node(db)), 490);
+
+t_eq("floor exact", rb_key(rb_floor_node(db, 250)), 250);
+t_eq("floor between", rb_key(rb_floor_node(db, 255)), 250);
+t_eq("floor above max", rb_key(rb_floor_node(db, 9999)), 490);
+t_ok("floor below min not found", not rb_found(rb_floor_node(db, -1)));
+
+t_eq("ceiling exact", rb_key(rb_ceiling_node(db, 250)), 250);
+t_eq("ceiling between", rb_key(rb_ceiling_node(db, 241)), 250);
+t_eq("ceiling below min", rb_key(rb_ceiling_node(db, -1)), 0);
+t_ok("ceiling above max not found", not rb_found(rb_ceiling_node(db, 9999)));
+
+t_eq("rank of first", rb_rank(db, 0), 0);
+t_eq("rank of 250", rb_rank(db, 250), 25);
+t_eq("rank between", rb_rank(db, 255), 26);
+t_eq("rank above max", rb_rank(db, 9999), 50);
+t_eq("rank below min", rb_rank(db, -1), 0);
+
+t_eq("select 0", rb_key(rb_select_node(db, 0)), 0);
+t_eq("select 25", rb_key(rb_select_node(db, 25)), 250);
+t_eq("select 49", rb_key(rb_select_node(db, 49)), 490);
+t_ok("select out of range", not rb_found(rb_select_node(db, 50)));
+t_ok("select negative", not rb_found(rb_select_node(db, -1)));
+
+# rank と select は互いの逆
+bad = 0;
+let i = 0 in
+  while i < 50 do
+    if rb_rank(db, rb_key(rb_select_node(db, i))) != i then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("rank(select(i)) == i for all i", bad, 0);
+
+# ===========================================================================
+# 6. 走査
+# ===========================================================================
+
+t_section("6. traversal");
+
+trav_prev = -1;
+trav_n    = 0;
+trav_sum  = 0;
+trav_ord  = 1;
+
+rb_foreach(db, fn(k, v)
+  if k <= trav_prev then trav_ord = 0; end
+  trav_prev = k;
+  trav_n    = trav_n + 1;
+  trav_sum  = trav_sum + v;
+end);
+t_eq("foreach visits every node", trav_n, 50);
+t_ok("foreach is in ascending order", trav_ord);
+t_eq("foreach sees the values", trav_sum, 1225);
+
+trav_n = 0;
+trav_prev = -1;
+trav_ord = 1;
+rb_range(db, 100, 200, fn(k, v)
+  if k < 100 or k > 200 then trav_ord = 0; end
+  if k <= trav_prev then trav_ord = 0; end
+  trav_prev = k;
+  trav_n = trav_n + 1;
+end);
+t_eq("range 100..200 count", trav_n, 11);
+t_ok("range stays in bounds and in order", trav_ord);
+
+trav_n = 0;
+rb_range(db, 105, 195, fn(k, v) trav_n = trav_n + 1; end);
+t_eq("range 105..195 (open ends) count", trav_n, 9);
+
+trav_n = 0;
+rb_range(db, 1000, 2000, fn(k, v) trav_n = trav_n + 1; end);
+t_eq("range with no matches", trav_n, 0);
+
+trav_n = 0;
+rb_range(db, 250, 250, fn(k, v) trav_n = trav_n + 1; end);
+t_eq("single-point range", trav_n, 1);
+
+# ===========================================================================
+# 7. ソート済みベクタからの一括構築（n = 0 .. 200 を全数検査）
+# ===========================================================================
+
+t_section("7. rb_from_sorted, exhaustive n = 0..200");
+
+def mk_pairs(n)
+  if n == 0 then return make_vector(0, 0); end
+  let v = make_vector(n, 0), i = 0 in
+    while i < n do
+      v[i] = [i, i * 10];
+      i = i + 1;
+    end
+    v;
+  end
+end
+
+bad = 0;
+let n = 0 in
+  while n <= 200 do
+    let d = rb_new_number(), pairs = 0 in
+      pairs = mk_pairs(n);
+      rb_from_sorted(d, pairs);
+      if rb_validate(d) == 0 then
+        display("  from_sorted invalid at n=");
+        print(n);
+        bad = bad + 1;
+      end
+      if rb_size(d) != n then bad = bad + 1; end
+      let i = 0 in
+        while i < n do
+          if rb_get(d, i, -1) != i * 10 then bad = bad + 1; end
+          i = i + 1;
+        end
+      end
+    end
+    n = n + 1;
+  end
+end
+t_eq("from_sorted valid and complete for all n in 0..200", bad, 0);
+
+# 一括構築した木がその後の挿入・削除にも耐えること
+d = rb_new_number();
+rb_from_sorted(d, mk_pairs(100));
+bad = 0;
+let i = 0 in
+  while i < 100 do
+    rb_delete(d, i);
+    rb_put(d, 1000 + i, i);
+    if rb_validate(d) == 0 then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("bulk-built tree survives later updates", bad, 0);
+t_eq("size after 100 del + 100 put", rb_size(d), 100);
+
+# 一括構築は逐次挿入より浅いか同じ
+d1 = rb_new_number();
+rb_from_sorted(d1, mk_pairs(1000));
+d2 = rb_new_number();
+let i = 0 in
+  while i < 1000 do
+    rb_put(d2, i, i * 10);
+    i = i + 1;
+  end
+end
+display("  black height: bulk=");
+display(rb_black_height(d1));
+display("  sequential=");
+print(rb_black_height(d2));
+t_ok("bulk build is no deeper than sequential",
+     rb_black_height(d1) <= rb_black_height(d2));
+
+# ===========================================================================
+# 8. 文字列キー（FC-02 で追加したプリミティブを使う）
+# ===========================================================================
+
+t_section("8. string keys");
+
+sdb = rb_new_string();
+rb_put(sdb, "pear",   1);
+rb_put(sdb, "apple",  2);
+rb_put(sdb, "orange", 3);
+rb_put(sdb, "banana", 4);
+rb_put(sdb, "cherry", 5);
+rb_put(sdb, "grape",  6);
+rb_put(sdb, "apple",  7);
+
+t_eq("string tree size (apple overwritten)", rb_size(sdb), 6);
+t_eq("string tree valid", rb_validate(sdb), 1);
+t_eq("get by string key", rb_get(sdb, "apple", -1), 7);
+t_eq("get missing string key", rb_get(sdb, "melon", -1), -1);
+t_ok("contains string key", rb_contains(sdb, "grape"));
+t_ok("does not contain melon", not rb_contains(sdb, "melon"));
+
+# 文字列リテラルは eq では一致しないが、比較関数は内容で比較する
+t_eq("literal identity is NOT equality in Fncalc", "apple" eq "apple", 0);
+t_ok("but the tree finds it by content", rb_contains(sdb, "apple"));
+
+sord = 1;
+sprev = 0;
+sfirst = 1;
+srev = 0;
+rb_foreach(sdb, fn(k, v)
+  if sfirst == 0 then
+    if string_compare(sprev, k) >= 0 then sord = 0; end
+  end
+  sprev  = k;
+  sfirst = 0;
+  srev   = srev + 1;
+end);
+t_ok("string keys traverse in lexicographic order", sord);
+t_eq("string traversal count", srev, 6);
+t_eq("string min", string_compare(rb_key(rb_min_node(sdb)), "apple"), 0);
+t_eq("string max", string_compare(rb_key(rb_max_node(sdb)), "pear"), 0);
+t_eq("string floor", string_compare(rb_key(rb_floor_node(sdb, "coconut")), "cherry"), 0);
+t_eq("string ceiling", string_compare(rb_key(rb_ceiling_node(sdb, "coconut")), "grape"), 0);
+
+t_eq("delete string key", rb_delete(sdb, "banana"), 1);
+t_eq("delete missing string key", rb_delete(sdb, "melon"), 0);
+t_eq("string tree still valid", rb_validate(sdb), 1);
+t_eq("string tree size after delete", rb_size(sdb), 5);
+
+# ===========================================================================
+# 9. 永続版（スナップショットが壊れないこと）
+# ===========================================================================
+
+t_section("9. persistent updates and snapshots");
+
+pdb   = rb_new_number();
+snaps = make_vector(4, 0);
+let i = 0 in
+  while i < 40 do
+    rbp_put(pdb, i, i * 100);
+    if i % 10 == 9 then snaps[i // 10] = rbp_snapshot(pdb); end
+    i = i + 1;
+  end
+end
+t_eq("persistent build size", rb_size(pdb), 40);
+t_eq("persistent build valid", rb_validate(pdb), 1);
+
+# 破壊的に見えない更新を大量に行う
+let i = 0 in
+  while i < 40 do
+    rbp_delete(pdb, i);
+    i = i + 2;
+  end
+end
+let i = 0 in
+  while i < 30 do
+    rbp_put(pdb, 500 + i, i);
+    i = i + 1;
+  end
+end
+t_eq("after persistent updates valid", rb_validate(pdb), 1);
+t_eq("after persistent updates size", rb_size(pdb), 50);
+
+# 過去のスナップショットがすべて健在か
+bad = 0;
+let i = 0 in
+  while i < 4 do
+    let s = rb_from_root(snaps[i], rb_cmp_number), want = 0, j = 0 in
+      want = (i + 1) * 10;
+      if rb_validate(s) == 0 then bad = bad + 1; end
+      if rb_size(s) != want then
+        display("  snapshot ");
+        display(i);
+        display(" size=");
+        display(rb_size(s));
+        display(" want=");
+        print(want);
+        bad = bad + 1;
+      end
+      while j < want do
+        if rb_get(s, j, -1) != j * 100 then bad = bad + 1; end
+        j = j + 1;
+      end
+      if rb_contains(s, want) then bad = bad + 1; end
+    end
+    i = i + 1;
+  end
+end
+t_eq("all 4 snapshots intact after later updates", bad, 0);
+
+# 永続版と破壊版が同じ結果になること
+pa = rb_new_number();
+pb = rb_new_number();
+t_seed = 777;
+bad = 0;
+let i = 0, k = 0 in
+  while i < 400 do
+    k = t_rnd(MODN);
+    if t_rnd(3) == 0 then
+      if rb_delete(pa, k) != rbp_delete(pb, k) then bad = bad + 1; end
+    else
+      rb_put(pa, k, k * 100);
+      rbp_put(pb, k, k * 100);
+    end
+    if rb_size(pa) != rb_size(pb) then bad = bad + 1; end
+    if rb_validate(pb) == 0 then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+let i = 0 in
+  while i < MODN do
+    if rb_get(pa, i, -1) != rb_get(pb, i, -1) then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("persistent and destructive agree over 400 random ops", bad, 0);
+
+# ===========================================================================
+# 10. rbtree3.cal で壊れていた点の直接確認
+# ===========================================================================
+
+t_section("10. regressions from the rbtree3.cal audit");
+
+# RB-01: センチネルがオブジェクト同一性に依存しないこと。
+#        list2.cal が nil を再代入しても木は無事でなければならない。
+gdb = rb_new_number();
+let i = 0 in
+  while i < 20 do
+    rb_put(gdb, i, i);
+    i = i + 1;
+  end
+end
+nil = "nil";
+nil = "nil";
+nil = 0;
+t_eq("RB-01 tree survives nil being reassigned", rb_validate(gdb), 1);
+t_eq("RB-01 tree still complete", rb_size(gdb), 20);
+
+# RB-06: 古いハンドルを持ち続けても壊れないこと
+alias = gdb;
+rb_put(gdb, 100, 100);
+t_eq("RB-06 handle aliasing is safe", rb_size(alias), 21);
+t_eq("RB-06 aliased handle still valid", rb_validate(alias), 1);
+
+# FC-01: return が let を貫通すること
+def fc01_guard(n)
+  let a = n * 2 in
+    if a > 10 then return -1; end
+  end
+  99;
+end
+t_eq("FC-01 return escapes the let (a>10)", fc01_guard(6), -1);
+t_eq("FC-01 falls through otherwise", fc01_guard(2), 99);
+
+def fc01_loop()
+  let i = 0 in
+    while i < 100 do
+      if i == 7 then return i; end
+      i = i + 1;
+    end
+  end
+  -1;
+end
+t_eq("FC-01 return escapes let+while", fc01_loop(), 7);
+
+# ===========================================================================
+# 11. 規模
+# ===========================================================================
+
+t_section("11. scale");
+
+big = rb_new_number();
+let i = 0, k = 0 in
+  while i < 20000 do
+    k = (i * 7919) % 20011;
+    rb_put(big, k, i);
+    i = i + 1;
+  end
+end
+display("  20000 puts -> size ");
+display(rb_size(big));
+display(", black height ");
+print(rb_black_height(big));
+t_eq("large tree valid", rb_validate(big), 1);
+
+bad = 0;
+let i = 0, k = 0 in
+  while i < 20000 do
+    k = (i * 7919) % 20011;
+    if not rb_contains(big, k) then bad = bad + 1; end
+    i = i + 1;
+  end
+end
+t_eq("all 20000 keys found", bad, 0);
+t_eq("rank of max is size-1", rb_rank(big, rb_key(rb_max_node(big))), rb_size(big) - 1);
+
+let n = rb_size(big), i = 0 in
+  while i < n do
+    rb_delete_min(big);
+    i = i + 1;
+  end
+end
+t_eq("emptied by delete_min", rb_size(big), 0);
+t_eq("empty tree valid", rb_validate(big), 1);
+
+# ===========================================================================
+# 結果
+# ===========================================================================
+
+newline();
+print("=========================================");
+display("  assertions : ");
+print(t_count);
+display("  failures   : ");
+print(t_fail);
+if t_fail == 0 then
+  print("  RESULT     : ALL TESTS PASSED");
+else
+  print("  RESULT     : *** FAILURES ***");
+end
+print("=========================================");
+t_fail;

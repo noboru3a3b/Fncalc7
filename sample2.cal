@@ -381,7 +381,7 @@ def flatten(v)
 end
 
 ## 起動法
-# PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc6.scm
+# PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . .\fncalc9.scm
 # Calc> load("list2.cal");
 # => 1
 
