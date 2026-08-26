@@ -8,10 +8,13 @@ I received assistance from AI in creating this library, which was extremely help
   
 I have recently managed to resolve the conflict I had been considering between "continuations" and "tail-call optimization."
 My thanks go to Claude Opus 4.8.
-  
 
+Subsequently, I improved the red-black tree library to a level where it could serve as the foundation for a database.
+Along with that, I also made some minor enhancements to Fncalc.
+My thanks go to Claude Code.　　
+　　
 ## Usage:
-PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . fncalc8 scm  
+PS C:\Users\user\Gauche\Fncalc7> gosh -r7 -A . fncalc9 scm  
   
 ```python
 load("list2.cal");  
