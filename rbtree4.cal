@@ -25,6 +25,11 @@
 #   RB-09  ノードに size を持たせ、件数取得を O(1) に。rank / select が可能に。
 #   RB-10  内部関数は rbi_ 接頭辞。前提条件をコメントで明示。
 #   RB-11  ライブラリとテストを分離（試験は rbtree4_test.cal）。全名前に接頭辞。
+#   RB-12  ハンドルに mode を持たせ、rb_* と rbp_* の混用、およびスナップショット
+#          ハンドルへの書き込みを実行時に検出して拒否する。従来は黙って過去の
+#          スナップショットが壊れていた。
+#   RB-13  rb_from_sorted が入力（昇順・重複なし・[key,value] 対）を検査する。
+#          永続版に delete_min / delete_max / set_value / from_root を追加。
 #
 # ---------------------------------------------------------------------------
 # 表現
@@ -32,7 +37,9 @@
 #   ノード   : [left, right, color, key, data, size]   （長さ 6 のベクタ）
 #                0     1      2      3    4     5
 #   空リンク : 0（数値）。vector(x) が偽なら空。
-#   ハンドル : [root, cmp]   … これを db と呼ぶ
+#   ハンドル : [root, cmp, mode]   … これを db と呼ぶ
+#              mode は誤用検出用。RB_MODE_* を参照。要素 2 個の旧式ハンドルも
+#              そのまま動く（その場合は検査が省略されるだけ）。
 #   比較関数 : cmp(a, b) が 負 / 0 / 正 を返す
 #
 # ---------------------------------------------------------------------------
@@ -40,6 +47,15 @@
 # ---------------------------------------------------------------------------
 #   * rb_* は破壊的更新、rbp_* は経路複製。同じ db に両方を混ぜて使わないこと。
 #     混ぜると rb_* が rbp_* のスナップショットを書き換えてしまう。
+#     RB-12 以降、この混用はハンドルの mode で検出され、RB-MISUSE を表示して
+#     更新を拒否する。黙って壊れることはもう無い。
+#   * ただし rb_set_value(n, v) だけは検出できない。ノードを直接受け取るので
+#     どの木のものか判らないためで、rbp_* を使う木では呼んではいけない。そのノードを
+#     共有している過去のスナップショットまで値が変わる。永続版で値を差し替えるには
+#     rbp_set_value(db, k, v) を使うこと。
+#   * スナップショットを保持している間、その世代から到達できるノードは解放され
+#     ない。これは経路複製の仕様であって漏れではない。不要になった世代への参照は
+#     捨てること。
 #   * 内部関数 rbi_* は不変条件が成り立っていることを前提にしており、空リンクを
 #     渡すと落ちる。公開 API の rb_* / rbp_* だけを使うこと。
 #   * 空リンク判定に and の短絡評価を利用している箇所がある
@@ -50,6 +66,13 @@
 
 RB_BLACK = 0;
 RB_RED   = 1;
+
+# ハンドルの mode。rb_* と rbp_* の混用を実行時に捕まえるために使う
+RB_MODE_FREE  = 0;   # 未使用。どちらの更新からでも始められる
+RB_MODE_DESTR = 1;   # 破壊的更新で使用中。rbp_* へ移行してよい
+RB_MODE_PERS  = 2;   # 永続更新で使用中。スナップショットが出回っているので
+                     # 破壊的更新は拒否する
+RB_MODE_READ  = 3;   # 読み取り専用。rb_from_root が返すハンドル
 
 # ===========================================================================
 # 前提条件の検査
@@ -74,6 +97,63 @@ end
 if not function(string_compare) then
   print("!!! rbtree4.cal: string primitives are missing (fncalc9.scm required).");
   print("!!! Numeric keys still work; rb_new_string() will fail.");
+end
+
+# ===========================================================================
+# 誤用の検出
+# ===========================================================================
+#
+# 破壊的更新と永続更新を同じ木に混ぜると、過去のスナップショットが黙って壊れる。
+# 検出できる誤用はここで捕まえ、更新を実行せずに拒否する。
+
+rb_misuse_count = 0;
+
+def rbi_misuse(msg)
+  display("  RB-MISUSE: ");
+  print(msg);
+  rb_misuse_count = rb_misuse_count + 1;
+  0;
+end
+
+# 検出回数を 0 に戻す（試験用）
+def rb_misuse_reset()
+  rb_misuse_count = 0;
+  0;
+end
+
+# 破壊的更新をしてよいか。よければ 1 を返し、mode を「破壊的」にする。
+# だめなら理由を表示して 0（呼び出し側は何もせずに戻る）
+def rbi_want_destructive(db)
+  if not vector(db) then
+    rbi_misuse("handle is not a vector");
+    return 0;
+  end
+  if length(db) < 3 then return 1; end          # 旧式ハンドルは検査しない
+  if db[2] == RB_MODE_PERS then
+    rbi_misuse("destructive rb_* on a tree already updated by rbp_* (snapshots would break)");
+    return 0;
+  end
+  if db[2] == RB_MODE_READ then
+    rbi_misuse("destructive rb_* on a read-only snapshot handle");
+    return 0;
+  end
+  db[2] = RB_MODE_DESTR;
+  1;
+end
+
+# 永続更新をしてよいか。破壊的で使っていた木を永続へ移行するのは安全なので許す
+def rbi_want_persistent(db)
+  if not vector(db) then
+    rbi_misuse("handle is not a vector");
+    return 0;
+  end
+  if length(db) < 3 then return 1; end
+  if db[2] == RB_MODE_READ then
+    rbi_misuse("rbp_* on a read-only snapshot handle (use rbp_from_root to branch)");
+    return 0;
+  end
+  db[2] = RB_MODE_PERS;
+  1;
 end
 
 # ===========================================================================
@@ -457,13 +537,53 @@ def rbi_build_a(v, lo, n, d)
   end
 end
 
+# v が [key, value] 対の厳密昇順ベクタなら 1、そうでなければ 0
+def rbi_check_sorted(v, cmp)
+  let n = 0, i = 0, ok = 1 in
+    n = length(v);
+    while i < n and ok == 1 do
+      if not vector(v[i]) then
+        ok = 0;
+      else
+        if length(v[i]) < 2 then
+          ok = 0;
+        else
+          if i > 0 and cmp(v[i - 1][0], v[i][0]) >= 0 then ok = 0; end
+        end
+      end
+      i = i + 1;
+    end
+    ok;
+  end
+end
+
 # ===========================================================================
 # 永続版の内部関数（経路複製）
 # ===========================================================================
 #
-# 「これから書き換えるノードは、必ず自分の複製にしてから触る」だけが規則。
-# 引数 h は常に「呼び出し側が複製済みで、他から共有されていないノード」とする。
+# 規則は「これから書き換えるノードは、必ず自分の複製にしてから触る」だけ。
+# ただし「誰が複製するか」に二通りあり、関数ごとに違う。取り違えると共有中の
+# ノードを壊すので、各関数の先頭に【所有】【共有】を明記してある。
+#
+#   【所有】引数 h は呼び出し側が複製済みで、他から共有されていない。h 自身は
+#           そのまま書き換えてよい。ただし h の子はまだ共有されているので、子を
+#           書き換える前には必ず rbi_copy すること。
+#           … rbi_prot_left / rbi_prot_right / rbi_pflip / rbi_pbalance /
+#             rbi_pmove_red_left / rbi_pmove_red_right / rbi_pdelmin / rbi_pdel
+#
+#   【共有】引数 h は共有されたままでよい。関数が先頭で自分で複製する。
+#           … rbi_pput
+#
+# 【所有】の関数へ渡すときは、呼び出し側が rbi_copy(...) を通すこと。実際
+# rbi_pdelmin / rbi_pdel の再帰は rbi_pdel(rbi_copy(h[0]), ...) の形になっている。
+# 一方 rbi_pput の再帰が rbi_pput(n[0], ...) と裸で渡しているのは rbi_pput が
+# 【共有】規約だからであって、複製漏れではない。ここは読み違えられやすい。
+#
+# なお rbi_min_node / rbi_search など読むだけの関数は、どちらの規約とも無関係に
+# 共有ノードへ直接使ってよい。
 
+# 【所有】左回転。根に昇格する h[1] をここで複製してから組み替える
+# 前提: h[1] は非空
 def rbi_prot_left(h)
   let x = rbi_copy(h[1]) in
     h[1] = x[0];
@@ -476,6 +596,8 @@ def rbi_prot_left(h)
   end
 end
 
+# 【所有】右回転。根に昇格する h[0] をここで複製してから組み替える
+# 前提: h[0] は非空
 def rbi_prot_right(h)
   let x = rbi_copy(h[0]) in
     h[0] = x[1];
@@ -488,6 +610,9 @@ def rbi_prot_right(h)
   end
 end
 
+# 【所有】色の反転。両方の子は色を変える前にここで複製する。rbi_pmove_red_left /
+# rbi_pmove_red_right が複製を伴うのは、先頭でこれを呼んでいるため
+# 前提: h と両方の子が非空
 def rbi_pflip(h)
   h[0] = rbi_copy(h[0]);
   h[1] = rbi_copy(h[1]);
@@ -497,6 +622,7 @@ def rbi_pflip(h)
   h;
 end
 
+# 【所有】rbi_balance の複製版。呼び出す回転・反転がそれぞれ子を複製する
 def rbi_pbalance(h)
   if rbi_color(h[1]) == RB_RED and rbi_color(h[0]) == RB_BLACK then
     h = rbi_prot_left(h);
@@ -510,6 +636,8 @@ def rbi_pbalance(h)
   rbi_fixsize(h);
 end
 
+# 【共有】挿入。h は共有されたままでよく、先頭で自分の複製 n を作る。以降
+# 書き換えるのは n だけなので、元の h から見える木は変化しない
 def rbi_pput(h, k, v, cmp)
   if not vector(h) then return rbi_node(k, v); end
   let n = rbi_copy(h), c = 0 in
@@ -527,6 +655,7 @@ def rbi_pput(h, k, v, cmp)
   end
 end
 
+# 【所有】左へ降りる準備。前提: h は赤、h[0] と h[0][0] は黒、両子は非空
 def rbi_pmove_red_left(h)
   rbi_pflip(h);
   if rbi_color(h[1][0]) == RB_RED then
@@ -537,6 +666,7 @@ def rbi_pmove_red_left(h)
   h;
 end
 
+# 【所有】右へ降りる準備。前提: h は赤、h[1] と h[1][0] は黒、両子は非空
 def rbi_pmove_red_right(h)
   rbi_pflip(h);
   if rbi_color(h[0][0]) == RB_RED then
@@ -546,6 +676,8 @@ def rbi_pmove_red_right(h)
   h;
 end
 
+# 【所有】最小要素の削除。左へ降りる前に rbi_copy(h[0]) を通すのが要点
+# 前提: h は複製済みかつ非空で、h または h[0] が赤
 def rbi_pdelmin(h)
   if not vector(h[0]) then return 0; end
   if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
@@ -555,6 +687,22 @@ def rbi_pdelmin(h)
   rbi_pbalance(h);
 end
 
+# 【所有】最大要素の削除。rbi_delmax の複製版
+# 前提: h は複製済みかつ非空で、h または h[0] が赤
+def rbi_pdelmax(h)
+  if rbi_color(h[0]) == RB_RED then
+    h = rbi_prot_right(h);
+  end
+  if not vector(h[1]) then return 0; end
+  if rbi_color(h[1]) == RB_BLACK and rbi_color(h[1][0]) == RB_BLACK then
+    h = rbi_pmove_red_right(h);
+  end
+  h[1] = rbi_pdelmax(rbi_copy(h[1]));
+  rbi_pbalance(h);
+end
+
+# 【所有】削除。子へ降りるときは必ず rbi_copy(...) を通す
+# 前提: h は複製済み。k は部分木に必ず存在する（呼び出し側が contains で確認済み）
 def rbi_pdel(h, k, cmp)
   if cmp(k, h[3]) < 0 then
     if rbi_color(h[0]) == RB_BLACK and rbi_color(h[0][0]) == RB_BLACK then
@@ -587,22 +735,34 @@ end
 # ===========================================================================
 
 def rb_new(cmp)
-  [0, cmp];
+  if not function(cmp) then
+    rbi_misuse("rb_new: cmp must be a function taking (a, b)");
+  end
+  [0, cmp, RB_MODE_FREE];
 end
 
 def rb_new_number()
-  [0, rb_cmp_number];
+  [0, rb_cmp_number, RB_MODE_FREE];
 end
 
 def rb_new_string()
-  [0, rb_cmp_string];
+  [0, rb_cmp_string, RB_MODE_FREE];
 end
 
-# スナップショット（rbp_snapshot の戻り値）から読み取り用ハンドルを作る
+# スナップショット（rbp_snapshot の戻り値）から読み取り専用のハンドルを作る。
+# このハンドルへの更新はすべて拒否されるので、過去の世代を誤って壊せない。
 def rb_from_root(root, cmp)
-  [root, cmp];
+  [root, cmp, RB_MODE_READ];
 end
 
+# スナップショットから枝分かれして永続更新を続けるためのハンドル。
+# 元のスナップショットは経路複製によって保たれる。
+def rbp_from_root(root, cmp)
+  [root, cmp, RB_MODE_PERS];
+end
+
+# 生のルートを取り出す。これを保存して後から読むつもりなら rbp_snapshot を使う
+# こと（rb_root では mode が変わらないので、後続の rb_put が黙って書き換える）。
 def rb_root(db)
   db[0];
 end
@@ -615,8 +775,15 @@ def rb_is_empty(db)
   not vector(db[0]);
 end
 
+# 中身を捨てる。根を手放すだけなのでスナップショットは壊れない。
+# 読み取り専用ハンドルに対しては拒否する。
 def rb_clear(db)
+  if length(db) >= 3 and db[2] == RB_MODE_READ then
+    rbi_misuse("rb_clear on a read-only snapshot handle");
+    return 0;
+  end
   db[0] = 0;
+  if length(db) >= 3 then db[2] = RB_MODE_FREE; end
   0;
 end
 
@@ -629,6 +796,9 @@ def rb_value(n)
   n[4];
 end
 
+# 値の上書き。ノードを直接書き換えるので、rbp_* で更新している木には使わないこと。
+# そのノードを共有している過去のスナップショットの値まで変わってしまう。
+# 永続版では rbp_put(db, k, v) を使う。
 def rb_set_value(n, v)
   n[4] = v;
 end
@@ -688,15 +858,18 @@ end
 # 公開 API : 更新（破壊的）
 # ===========================================================================
 
+# 挿入または上書き。戻り値は v。誤用で拒否したときは RB-MISUSE を表示して 0
 def rb_put(db, k, v)
+  if not rbi_want_destructive(db) then return 0; end
   db[0] = rbi_put(db[0], k, v, db[1]);
   db[0][2] = RB_BLACK;
   v;
 end
 
-# 削除できたら 1、キーが無ければ 0
+# 削除できたら 1、キーが無ければ（または誤用で拒否したら）0
 def rb_delete(db, k)
   if not rb_contains(db, k) then return 0; end
+  if not rbi_want_destructive(db) then return 0; end
   if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
     db[0][2] = RB_RED;
   end
@@ -707,6 +880,7 @@ end
 
 def rb_delete_min(db)
   if not vector(db[0]) then return 0; end
+  if not rbi_want_destructive(db) then return 0; end
   if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
     db[0][2] = RB_RED;
   end
@@ -717,6 +891,7 @@ end
 
 def rb_delete_max(db)
   if not vector(db[0]) then return 0; end
+  if not rbi_want_destructive(db) then return 0; end
   if rbi_color(db[0][0]) == RB_BLACK and rbi_color(db[0][1]) == RB_BLACK then
     db[0][2] = RB_RED;
   end
@@ -726,8 +901,19 @@ def rb_delete_max(db)
 end
 
 # ソート済み（昇順・キー重複なし）の [key, value] 対のベクタから O(n) で構築する。
-# 既存の中身は捨てる。初期ロード用。
+# 既存の中身は捨てる。初期ロード用。戻り値は件数、入力が不正なら -1。
+# 入力の前提は必ず検査する。破ると BST 順序を満たさない木が黙って出来上がり、
+# その後の探索が静かに誤答するため。
 def rb_from_sorted(db, v)
+  if not rbi_want_destructive(db) then return -1; end
+  if not vector(v) then
+    rbi_misuse("rb_from_sorted: a vector of [key, value] pairs is required");
+    return -1;
+  end
+  if rbi_check_sorted(v, db[1]) == 0 then
+    rbi_misuse("rb_from_sorted: need [key, value] pairs with strictly ascending keys");
+    return -1;
+  end
   let n = 0, d = 0 in
     n = length(v);
     while rbi_bmax_b(d) < n do d = d + 1; end
@@ -742,24 +928,79 @@ end
 #
 # 更新前のルートを取っておけば、それは永久に有効なスナップショットになる。
 # 1 回の更新で新しく作られるノードは O(log n) 個。
+#
+# 揃っているのは put / delete / delete_min / delete_max / set_value。
+# from_sorted の永続版は無い（初期ロードは破壊的に作ってから rbp_snapshot を
+# 取れば済むため）。
 
+# ルート参照をそのまま返すのが正しい。ここで複製を取る必要は無い。以後この db を
+# rbp_* で更新しても、更新は経路上のノードを複製して行われるので、返した参照から
+# 見える木は変化しない。読み出すときは rb_from_root(root, cmp) でハンドルに包む。
+#
+# スナップショットを取った時点でルートは共有される。以後この db への破壊的更新は
+# 過去の世代を壊すので、ここで mode を「永続」に固定して rb_* を拒否させる。
 def rbp_snapshot(db)
+  if length(db) >= 3 and db[2] != RB_MODE_READ then
+    db[2] = RB_MODE_PERS;
+  end
   db[0];
 end
 
+# 挿入または上書き。戻り値は v。誤用で拒否したときは RB-MISUSE を表示して 0
 def rbp_put(db, k, v)
+  if not rbi_want_persistent(db) then return 0; end
   db[0] = rbi_pput(db[0], k, v, db[1]);
   db[0][2] = RB_BLACK;
   v;
 end
 
+# 既存キーの値だけを差し替える。あったら 1、無ければ 0。
+# rb_set_value と違い、過去のスナップショットを壊さない。
+def rbp_set_value(db, k, v)
+  if not rb_contains(db, k) then return 0; end
+  if not rbi_want_persistent(db) then return 0; end
+  db[0] = rbi_pput(db[0], k, v, db[1]);
+  db[0][2] = RB_BLACK;
+  1;
+end
+
+# 削除できたら 1、キーが無ければ（または誤用で拒否したら）0
 def rbp_delete(db, k)
   if not rb_contains(db, k) then return 0; end
+  if not rbi_want_persistent(db) then return 0; end
   let r = rbi_copy(db[0]) in
     if rbi_color(r[0]) == RB_BLACK and rbi_color(r[1]) == RB_BLACK then
       r[2] = RB_RED;
     end
     db[0] = rbi_pdel(r, k, db[1]);
+    if vector(db[0]) then db[0][2] = RB_BLACK; end
+  end
+  1;
+end
+
+# 最小要素を削除する。空なら（または誤用で拒否したら）0、削除できたら 1
+def rbp_delete_min(db)
+  if not vector(db[0]) then return 0; end
+  if not rbi_want_persistent(db) then return 0; end
+  let r = rbi_copy(db[0]) in
+    if rbi_color(r[0]) == RB_BLACK and rbi_color(r[1]) == RB_BLACK then
+      r[2] = RB_RED;
+    end
+    db[0] = rbi_pdelmin(r);
+    if vector(db[0]) then db[0][2] = RB_BLACK; end
+  end
+  1;
+end
+
+# 最大要素を削除する。空なら（または誤用で拒否したら）0、削除できたら 1
+def rbp_delete_max(db)
+  if not vector(db[0]) then return 0; end
+  if not rbi_want_persistent(db) then return 0; end
+  let r = rbi_copy(db[0]) in
+    if rbi_color(r[0]) == RB_BLACK and rbi_color(r[1]) == RB_BLACK then
+      r[2] = RB_RED;
+    end
+    db[0] = rbi_pdelmax(r);
     if vector(db[0]) then db[0][2] = RB_BLACK; end
   end
   1;

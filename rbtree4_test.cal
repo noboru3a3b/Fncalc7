@@ -762,6 +762,158 @@ t_eq("emptied by delete_min", rb_size(big), 0);
 t_eq("empty tree valid", rb_validate(big), 1);
 
 # ===========================================================================
+# 12. RB-12 / RB-13 : 誤用の検出と入力検査
+#     RB-MISUSE の表示は想定どおりの出力である
+# ===========================================================================
+
+t_section("12. misuse detection (RB-MISUSE output below is expected)");
+
+# --- 永続で使い始めた木への破壊的更新は拒否される -------------------------
+mdb = rb_new_number();
+let i = 0 in
+  while i < 20 do rbp_put(mdb, i, i); i = i + 1; end
+end
+msnap = rbp_snapshot(mdb);
+
+rb_misuse_reset();
+t_eq("rb_put on a persistent tree is refused",     rb_put(mdb, 99, 99), 0);
+t_eq("rb_delete on a persistent tree is refused",  rb_delete(mdb, 5), 0);
+t_eq("rb_delete_min on a persistent tree is refused", rb_delete_min(mdb), 0);
+t_eq("rb_delete_max on a persistent tree is refused", rb_delete_max(mdb), 0);
+t_eq("rb_from_sorted on a persistent tree is refused", rb_from_sorted(mdb, mk_pairs(4)), -1);
+t_eq("five misuses were reported", rb_misuse_count, 5);
+t_eq("tree was left untouched", rb_size(mdb), 20);
+t_eq("tree is still valid", rb_validate(mdb), 1);
+t_eq("snapshot is intact", rb_size(rb_from_root(msnap, rb_cmp_number)), 20);
+
+# --- 読み取り専用ハンドルへの更新は拒否される -----------------------------
+rdb = rb_from_root(msnap, rb_cmp_number);
+rb_misuse_reset();
+t_eq("rb_put on a snapshot handle is refused",  rb_put(rdb, 1, 1), 0);
+t_eq("rbp_put on a snapshot handle is refused", rbp_put(rdb, 1, 1), 0);
+t_eq("rb_clear on a snapshot handle is refused", rb_clear(rdb), 0);
+t_eq("three misuses were reported", rb_misuse_count, 3);
+t_eq("snapshot still has 20 entries", rb_size(rdb), 20);
+t_eq("snapshot still valid", rb_validate(rdb), 1);
+
+# --- 破壊的 → 永続への移行は安全なので許される ----------------------------
+udb = rb_new_number();
+rb_misuse_reset();
+let i = 0 in
+  while i < 30 do rb_put(udb, i, i); i = i + 1; end
+end
+let i = 0 in
+  while i < 10 do rbp_put(udb, 100 + i, i); i = i + 1; end
+end
+t_eq("destructive -> persistent upgrade is allowed", rb_misuse_count, 0);
+t_eq("upgraded tree size", rb_size(udb), 40);
+t_eq("upgraded tree valid", rb_validate(udb), 1);
+
+# --- rb_clear でモードが戻り、再び破壊的に使える --------------------------
+rb_misuse_reset();
+rb_clear(udb);
+rb_put(udb, 1, 1);
+t_eq("rb_clear resets the mode", rb_misuse_count, 0);
+t_eq("reusable after clear", rb_size(udb), 1);
+
+# --- rbp_from_root : スナップショットから枝分かれする ---------------------
+rb_misuse_reset();
+bdb1 = rbp_from_root(msnap, rb_cmp_number);
+bdb2 = rbp_from_root(msnap, rb_cmp_number);
+rbp_put(bdb1, 1000, 1000);
+rbp_delete(bdb2, 0);
+t_eq("branching needs no misuse report", rb_misuse_count, 0);
+t_eq("branch 1 size", rb_size(bdb1), 21);
+t_eq("branch 2 size", rb_size(bdb2), 19);
+t_eq("branch 1 valid", rb_validate(bdb1), 1);
+t_eq("branch 2 valid", rb_validate(bdb2), 1);
+t_eq("branch 1 has the new key", rb_get(bdb1, 1000, -1), 1000);
+t_eq("branch 2 lacks the new key", rb_contains(bdb2, 1000), 0);
+t_eq("branch 1 still has key 0", rb_contains(bdb1, 0), 1);
+t_eq("branch 2 dropped key 0", rb_contains(bdb2, 0), 0);
+t_eq("common ancestor untouched", rb_size(rb_from_root(msnap, rb_cmp_number)), 20);
+t_eq("ancestor still has key 0", rb_contains(rb_from_root(msnap, rb_cmp_number), 0), 1);
+
+# --- rbp_delete_min / rbp_delete_max --------------------------------------
+qdb = rb_new_number();
+let i = 0 in
+  while i < 50 do rbp_put(qdb, i, i * 3); i = i + 1; end
+end
+qsnap = rbp_snapshot(qdb);
+rb_misuse_reset();
+t_eq("rbp_delete_min returns 1", rbp_delete_min(qdb), 1);
+t_eq("rbp_delete_max returns 1", rbp_delete_max(qdb), 1);
+t_eq("size after both", rb_size(qdb), 48);
+t_eq("valid after both", rb_validate(qdb), 1);
+t_eq("min is now 1",  rb_key(rb_min_node(qdb)), 1);
+t_eq("max is now 48", rb_key(rb_max_node(qdb)), 48);
+t_eq("snapshot before them is intact", rb_size(rb_from_root(qsnap, rb_cmp_number)), 50);
+t_eq("snapshot still has 0",  rb_contains(rb_from_root(qsnap, rb_cmp_number), 0), 1);
+t_eq("snapshot still has 49", rb_contains(rb_from_root(qsnap, rb_cmp_number), 49), 1);
+t_eq("no misuse during persistent deletes", rb_misuse_count, 0);
+
+# 全部消せること
+let i = 0 in
+  while i < 48 do
+    if i % 2 == 0 then rbp_delete_min(qdb); else rbp_delete_max(qdb); end
+    if rb_validate(qdb) == 0 then t_ok("rbp delete loop stays valid", 0); end
+    i = i + 1;
+  end
+end
+t_eq("emptied by persistent deletes", rb_size(qdb), 0);
+t_eq("rbp_delete_min on empty returns 0", rbp_delete_min(qdb), 0);
+t_eq("rbp_delete_max on empty returns 0", rbp_delete_max(qdb), 0);
+t_eq("original snapshot survived it all", rb_size(rb_from_root(qsnap, rb_cmp_number)), 50);
+
+# --- rbp_set_value : 過去を壊さずに値だけ差し替える ------------------------
+vdb = rb_new_number();
+let i = 0 in
+  while i < 20 do rbp_put(vdb, i, i); i = i + 1; end
+end
+vsnap = rb_from_root(rbp_snapshot(vdb), rb_cmp_number);
+rb_misuse_reset();
+t_eq("rbp_set_value on an existing key", rbp_set_value(vdb, 5, 55555), 1);
+t_eq("rbp_set_value on a missing key",   rbp_set_value(vdb, 999, 1), 0);
+t_eq("current generation sees the new value", rb_get(vdb, 5, -1), 55555);
+t_eq("snapshot keeps the old value",          rb_get(vsnap, 5, -1), 5);
+t_eq("no misuse", rb_misuse_count, 0);
+t_eq("still valid", rb_validate(vdb), 1);
+
+# --- RB-13 : rb_from_sorted の入力検査 ------------------------------------
+rb_misuse_reset();
+sdb2 = rb_new_number();
+t_eq("descending input is refused",
+     rb_from_sorted(sdb2, [[3, "c"], [2, "b"], [1, "a"]]), -1);
+rb_clear(sdb2);
+t_eq("duplicate keys are refused",
+     rb_from_sorted(sdb2, [[1, "a"], [1, "b"], [2, "c"]]), -1);
+rb_clear(sdb2);
+t_eq("non-pair elements are refused",
+     rb_from_sorted(sdb2, [[1, "a"], 7, [3, "c"]]), -1);
+rb_clear(sdb2);
+t_eq("short pairs are refused",
+     rb_from_sorted(sdb2, [[1, "a"], [2], [3, "c"]]), -1);
+rb_clear(sdb2);
+t_eq("a non-vector is refused", rb_from_sorted(sdb2, 5), -1);
+t_eq("five input errors were reported", rb_misuse_count, 5);
+t_eq("nothing was built", rb_size(sdb2), 0);
+
+rb_misuse_reset();
+rb_clear(sdb2);
+t_eq("proper input still builds", rb_from_sorted(sdb2, [[1, "a"], [2, "b"], [3, "c"]]), 3);
+t_eq("built tree is valid", rb_validate(sdb2), 1);
+t_eq("empty input is accepted",  rb_from_sorted(rb_new_number(), []), 0);
+t_eq("single pair is accepted",  rb_from_sorted(rb_new_number(), [[1, "a"]]), 1);
+t_eq("no misuse on valid input", rb_misuse_count, 0);
+
+# --- rb_new の cmp 検査 ----------------------------------------------------
+rb_misuse_reset();
+junk = rb_new(42);
+t_eq("rb_new rejects a non-function cmp", rb_misuse_count, 1);
+
+rb_misuse_reset();
+
+# ===========================================================================
 # 結果
 # ===========================================================================
 
